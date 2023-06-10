@@ -297,7 +297,7 @@ async def player_chat(message: Message,
                 await message.answer(lex['this_mute'])
             else:
                 await game.send_to_all_players_without(uid, func=func, text=text, sticker=sticker, voice=voice)
-        elif game.phase is GamePhase.night:
+        elif game.phase in (GamePhase.night, GamePhase.evening):
             if player.role.get_team() is Team.mafia:
                 predicate = lambda player: player.id != uid and player.role.get_team() is Team.mafia
                 await game.send_to_all_players(func=func, predicate=predicate, text=text, sticker=sticker, voice=voice)
@@ -358,8 +358,8 @@ async def process_button_press(callback: CallbackQuery):
             await callback.message.edit_text(lex['your_code'] + str(code))
         await game.add_player(uid)
 
-        # for i in range(game.size_game - 2):
-        #     await game.add_player(i)
+        for i in range(game.size_game - 1):
+            await game.add_player(i)
 
     if stage == 1:
         keys = tuple(Cdata.__members__.values())
@@ -438,42 +438,67 @@ async def process_button_press(callback: CallbackQuery):
         else:
             target = None
             t_name = None
-        await callback.message.delete()
-        if target is not None and not player.choosed and game.phase is GamePhase.night:
-            if player.role is Role.killer:
-                target.choosen_kill += 1
-                await callback.message.answer(lex['choose'] + t_name + lex['wait'])
-            elif player.role is Role.godfather:
-                target.choosen_godfather += 1
-                await callback.message.answer(lex['choose'] + t_name + lex['wait'])
-            elif player.role is Role.doctor:
-                target.choosen_doctor += 1
-                await callback.message.answer(lex['choose'] + t_name + lex['wait'])
-            elif player.role is Role.sheriff:
-                await callback.message.answer(lex['choose'] + t_name + '. ' + lex['his_role'] + str(target.role) + lex['wait'])
-            elif player.role is Role.beauty:
-                target.choosen_beauty += 1
-                await callback.message.answer(lex['choose'] + t_name + lex['wait'])
-            elif player.role is Role.medium:
-                target.medium_who_contact = player
-                await send_message(target.id, FuncEnum.text, text=lex['medium_connect_to'])
-                await callback.message.answer(lex['medium_connect_from'])
-            player.choosed = True
-            player.target = target
-        elif player.mute:
-            await callback.answer(text=lex['no_voted'])
-        elif not player.voted and game.phase is GamePhase.day_voting:
-            if target is not None:
-                if player.role != Role.observer:
-                    target.voices += 1
-                    await callback.message.answer(lex['vote'] + t_name + '.')
-                player.voted = True
-            elif data == 'skip':
-                game.skip_count += 1
-                await callback.message.answer(lex['skip_m'])
-                player.voted = True
-        else:
-            await callback.answer(text=lex['already_voted'])
+
+        if game.phase is GamePhase.evening:
+            if target is not None and not player.choosed:
+                if target == player.old_target:
+                    await callback.message.answer(lex['eq_old_tg'])
+                else:
+                    if player.role is Role.beauty:
+                        target.choosen_beauty += 1
+                        await callback.message.answer(lex['choose'] + t_name + lex['wait'])
+                    elif player.role is Role.medium:
+                        target.medium_who_contact = player
+                        await send_message(target.id, FuncEnum.text, text=lex['medium_connect_to'])
+                        await callback.message.answer(lex['medium_connect_from'])
+
+                    if player.role in (Role.medium, Role.beauty):
+                        player.choosed = True
+                        player.target = target
+
+                    await callback.message.delete()
+
+        elif game.phase is GamePhase.night:
+            if target is not None and not player.choosed:
+                if target == player.old_target:
+                    await callback.message.answer(lex['eq_old_tg'])
+                else:
+                    if player.role is Role.killer:
+                        target.choosen_kill += 1
+                        await callback.message.answer(lex['choose'] + t_name + lex['wait'])
+                    elif player.role is Role.godfather:
+                        target.choosen_godfather += 1
+                        await callback.message.answer(lex['choose'] + t_name + lex['wait'])
+                    elif player.role is Role.doctor:
+                        target.choosen_doctor += 1
+                        await callback.message.answer(lex['choose'] + t_name + lex['wait'])
+                    elif player.role is Role.sheriff:
+                        if player.choosen_beauty > 0:
+                            await callback.message.answer(
+                                lex['choose'] + t_name + '. ' + lex['no_find_role'] + lex['wait'])
+                        else:
+                            await callback.message.answer(lex['choose'] + t_name + '. ' + lex['his_role'] + str(target.role) + lex['wait'])
+                    player.choosed = True
+                    player.target = target
+
+                    await callback.message.delete()
+
+        elif game.phase is GamePhase.day_voting:
+            await callback.message.delete()
+            if player.mute:
+                await callback.answer(text=lex['no_voted'])
+            elif not player.voted:
+                if target is not None:
+                    if player.role != Role.observer:
+                        target.voices += 1
+                        await callback.message.answer(lex['vote'] + t_name + '.')
+                    player.voted = True
+                elif data == 'skip':
+                    game.skip_count += 1
+                    await callback.message.answer(lex['skip_m'])
+                    player.voted = True
+            else:
+                await callback.answer(text=lex['already_voted'])
 
 
 #

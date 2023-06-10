@@ -72,13 +72,14 @@ lex: dict[str, str] = {
     'rules_medium': 'Ночь: выбирает одного призрака, с которым может общаться до наступления дня. Медиум может отправлять любые сообщения, призрак - только текстовые.',
     'team': 'Команда:',
     'waiting': 'Ищем для вас соперников. Как только наберётся достаточно игроков, мы начнём.',
+    'evening_common': '🌄 Наступает вечер. На улицу выходят разные сомнительные личности.',
+    'evening_beauty': '🌄 Наступает вечер. Пришло время выбрать, чьё действие этой ночью будет отменено.',
+    'evening_medium': '🌄 Наступает вечер. Пришло время выбрать, с каким призраком связаться.',
     'night_common': '🌃 Наступает ночь. Мирные жители засыпают, просыпается мафия...',
     'night_killer': '🌃 Наступает ночь. Теперь, когда мирные жители уснули, пришло время выбрать, кто из них не увидит завтрашний день...',
     'night_doctor': '🌃 Наступает ночь. Бригада скорой помощи выезжает, но приехать ко всем вы не успеете. Пришло время выбрать, кто сегодня будет спасён.',
     'night_sheriff': '🌃 Наступает ночь. Убийца прячется под личиной мирного жителя. Пришло время проверить кого-то из них, чтобы вычислить его.',
-    'night_beauty': '🌃 Наступает ночь. Пришло время выбрать, чьё действие этой ночью будет отменено.',
     'night_godfather': '🌃 Наступает ночь. Пришло время выбрать, кто днём не сможет участвовать в обсуждении и голосовать.',
-    'night_medium': '🌃 Наступает ночь. Пришло время выбрать, с каким призраком связаться.',
     'start_voting': 'Обсуждение закончено. Пришло время выбрать, кто должен быть изгнан.',
     'vote': 'Вы проголосовали за ',
     'already_voted': 'Вы уже проголосовали!',
@@ -105,7 +106,9 @@ lex: dict[str, str] = {
     'medium_connect_to': 'С вами связался медиум. В течение ночи вы можете общаться с ним, но только текстовыми сообщениями.',
     'medium_connect_from': 'Вы связались с призраком. В течение ночи вы можете общаться с ним.',
     'skip': 'Пропуск',
-    'skip_m': 'Вы пропустили голосование.'
+    'skip_m': 'Вы пропустили голосование.',
+    'no_find_role': 'Вы не можете узнать роль',
+    'eq_old_tg': 'Вы не можете выбирать одного и того же игрока несколько раз подряд!'
 }
 
 
@@ -196,13 +199,15 @@ def m_result_night(players: list):
         if final_victim.choosen_kill == 0:
             mes.append(
                 f'было совершено покушение на {Bot_db.get_username(final_victim.id)}, но доктору удалось его/её спасти')
-        elif final_victim.role is not Role.immortal:
+        elif final_victim.role is Role.immortal and final_victim not in cancelled:
+            pass
+        else:
             mes_start = 'среди них нет:\n'
     else:
         mes.append('все остались живы')
 
     for player in players:
-        if player.role is Role.immortal:
+        if player.role is Role.immortal and player not in cancelled:
             player.choosen_kill = 0
         if player.choosen_kill > 0:
             mes.append(f'{mes_start}{Bot_db.get_username(player.id)}, роль - {str(player.role)}')
@@ -214,79 +219,13 @@ def m_result_night(players: list):
         mes.append('все остались живы')
 
     for cancel in cancelled:
-        mes.append(f'Красотка провела ночь с {str(cancel.role)}')
+        mes.append(f'Красотка провела ночь с {str(cancel.role.get_team())}')
     for m in mute:
         mes.append(f'Будет молчать сегодня {Bot_db.get_username(m.id)}')
     mes = ';\n'.join(mes)
     alives = [Bot_db.get_username(i.id) for i in alives]
     return f'🌅 Наступает день. Мирные жители просыпаются и обнаруживают, что сегодня {mes}.' \
            f'\n\nЖители собираются, чтобы обсудить главные вопросы на повестке дня.\n\nВ игре остались: {", ".join(alives)}.'
-
-
-# def m_result_night(players: list):
-#     victims = []
-#     healed = []
-#     cancelled = []
-#     alives = []
-#     mes = []
-#     kill_point = 0
-#     for player in players:
-#         if player.choosen_doctor > 0:
-#             healed.append(player)
-#         if player.choosen_beauty > 0:
-#             cancelled.append(player)
-#         if player.choosen_kill > 0:
-#             victims.append(player)
-#         elif player.role is not Role.observer:
-#             alives.append(player)
-#
-#     if len(healed) != 0:
-#         for patient in healed:
-#             if victims.__contains__(patient):
-#                 patient.choosen_kill -= patient.choosen_doctor  # Это логика, которой тут быть не должно! Но она такая удобная...
-#                 if patient.choosen_kill <= 0:
-#                     alives.append(patient)
-#                     victims.pop(victims.index(patient))
-#                     mes.append(f'было совершено покушение на {Bot_db.get_username(patient.id)}, но доктору удалось его/её спасти')
-#
-#     if len(victims) == 0 and len(mes) == 0:
-#         mes.append('все остались живы')
-#     else:
-#         first = 'среди них нет:\n'
-#         final_victims = []
-#         max_choosed = 0
-#         #print(str([vict.role for vict in victims]))
-#         for vict in victims:
-#             if vict.choosen_kill > max_choosed:
-#                 max_choosed = vict.choosen_kill
-#                 for old in final_victims:
-#                     old.choosen_kill = 0
-#                     alives.append(old)
-#                 final_victims = [vict]
-#             elif vict.choosen_kill == max_choosed:
-#                 final_victims.append(vict)
-#             else:
-#                 vict.choosen_kill = 0
-#                 alives.append(vict)
-#         #print(str([vict.role for vict in final_victims]))
-#         if len(final_victims) > 0:
-#             final_victim = random.choice(final_victims)
-#             final_victim.choosen_kill = kill_point
-#             final_victims.pop(final_victims.index(final_victim))
-#             for vict in final_victims:
-#                 vict.choosen_kill = 0
-#                 alives.append(vict)
-#             mes.append(f'{first}{Bot_db.get_username(final_victim.id)}, роль - {str(final_victim.role)}')
-#             # first = ''
-#     if len(cancelled) != 0:
-#         for cancel in cancelled:
-#             mes.append(f'Красотка провела ночь с {str(cancel.role)}')
-#     mes = ';\n'.join(mes)
-#     # print(alives)
-#     # print(str([str(vict.role) for vict in alives]))
-#     alives = [Bot_db.get_username(i.id) for i in alives]
-#     return f'🌅 Наступает день. Мирные жители просыпаются и обнаруживают, что сегодня {mes}.' \
-#            f'\n\nЖители собираются, чтобы обсудить главные вопросы на повестке дня.\n\nВ игре остались: {", ".join(alives)}.'
 
 
 def m_result_voting(target: list):

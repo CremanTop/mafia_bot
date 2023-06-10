@@ -8,9 +8,9 @@ class Team(Enum):
 
     def __str__(self):
         if self is Team.citizen:
-            return 'горожане'
+            return 'горожане 🟢'
         elif self is Team.mafia:
-            return 'мафия'
+            return 'мафия 🔴'
         elif self is Team.ghost:
             return 'нет команды'
         else:
