@@ -22,11 +22,12 @@ class Game:
         self.roles: list[Role] = waiting_list.game_roles
         self.players_id: list[int] = waiting_list.players_id
         self.players: list[Player] = []
-        self.phase: GamePhase = GamePhase.evening
+        self.phase: GamePhase = GamePhase.day_exclusion
         self.skip_count: int = 0
-        self.time_evening: int = 10  # 20
-        self.time_night: int = 10  # 30
-        self.time_speak: int = 5  # 90
+        self.voting_count: int = 0
+        self.time_evening: int = 15  # 20
+        self.time_night: int = 15  # 30
+        self.time_speak: int = 10  # 90
         self.time_voting: int = 20  # 20
 
     def get_player(self, user_id):
@@ -54,7 +55,7 @@ class Game:
 
     def assign_roles(self, players: list[int], role_list):
         def assign(chat_id, role):
-            if 0 <= chat_id <= 10:
+            if 0 <= chat_id <= 100:
                 new_player = Player(chat_id, role, virtual=True)
             else:
                 new_player = Player(chat_id, role)
@@ -66,6 +67,11 @@ class Game:
             assign(selected, role)
 
         for chat_id in players:
+            # if chat_id == 1662143212:
+            #     assign(chat_id, Role.barman)
+            # elif chat_id == 2130716911:
+            #     assign(chat_id, Role.barman)
+            # else:
             assign(chat_id, Role.common)
 
     async def send_to_all_players(self,
@@ -131,83 +137,98 @@ class Game:
                                        voice=voice)
 
     async def evening(self):
-        self.phase = GamePhase.evening
+        print('Должен быть вечер')
+        if self.phase is GamePhase.day_exclusion:
 
-        for player in self.players:
-            player.choosed = False
-            player.mute = False
-            player.old_target = player.target
-            player.target = None
+            self.phase = GamePhase.evening
+            self.voting_count = 0
 
-            if player.role is Role.beauty:
-                await send_message(player.id, FuncEnum.text, text=lex['evening_beauty'],
-                                   keyboard=kb_without_player(self.players, player))
-            elif player.role is Role.medium:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['evening_medium'],
-                                   keyboard=kb_role(self.players, Role.observer))
+            for player in self.players:
+                player.choosed = False
+                player.mute = False
+                player.drunk = False
+                player.old_target = player.target
+                player.target = None
 
-        await self.send_to_all_players_without_roles(roles=(Role.beauty, Role.medium), func=FuncEnum.text,
-                                                     text=lex['evening_common'])
+                if player.role is Role.beauty:
+                    await send_message(player.id, FuncEnum.text, text=lex['evening_beauty'],
+                                       keyboard=kb_without_player(self.players, player))
+                elif player.role is Role.medium:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['evening_medium'],
+                                       keyboard=kb_role(self.players, Role.observer))
+                elif player.role is Role.barman:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['evening_barman'],
+                                       keyboard=kb_without_player(self.players, player))
 
-        await asyncio.sleep(self.time_evening)
-        await self.night()
+            await self.send_to_all_players_without_roles(roles=(Role.beauty, Role.medium, Role.barman), func=FuncEnum.text,
+                                                         text=lex['evening_common'])
+
+            await asyncio.sleep(self.time_evening)
+            await self.night()
 
     async def night(self):
-        self.phase = GamePhase.night
-        self.revaluation_evening()
-        for player in self.players:
-            if player.role in (Role.common, Role.observer, Role.immortal, Role.beauty):
-                await send_message(player.id, FuncEnum.text, text=lex['night_common'])
-            elif player.role is Role.killer:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['night_killer'],
-                                   keyboard=kb_without_team(self.players, Team.mafia))
-            elif player.role is Role.doctor:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['night_doctor'],
-                                   keyboard=kb_all_players(self.players))
-            elif player.role is Role.sheriff:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['night_sheriff'],
-                                   keyboard=kb_without_player(self.players, player))
-            elif player.role is Role.godfather:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['night_godfather'],
-                                   keyboard=kb_without_player(self.players, player))
-            elif player.role is Role.medium:
-                await send_message(player.id, FuncEnum.keyboard, text=lex['night_medium'],
-                                   keyboard=kb_role(self.players, Role.observer))
-        await asyncio.sleep(self.time_night)
-        await self.setup_day()
+        print('Должна быть ночь')
+        if self.phase is GamePhase.evening:
+
+            self.voting_count = 0
+            self.phase = GamePhase.night
+            self.revaluation_evening()
+            for player in self.players:
+                if player.role in (Role.common, Role.observer, Role.immortal, Role.beauty, Role.barman):
+                    await send_message(player.id, FuncEnum.text, text=lex['night_common'])
+                elif player.role is Role.killer:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_killer'],
+                                       keyboard=kb_without_team(self.players, Team.mafia))
+                elif player.role is Role.doctor:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_doctor'],
+                                       keyboard=kb_all_players(self.players))
+                elif player.role is Role.sheriff:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_sheriff'],
+                                       keyboard=kb_without_player(self.players, player))
+                elif player.role is Role.godfather:
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_godfather'],
+                                       keyboard=kb_without_player(self.players, player))
+            await asyncio.sleep(self.time_night)
+            await self.setup_day()
 
     async def setup_day(self):
-        print('Выборы ночи:')
-        for player in self.players:
-            print(
-                f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
-        print()
+        print('Должен быть день')
+        if self.phase is GamePhase.night:
 
-        self.phase = GamePhase.day_discuss
-        self.revaluation_night()
-        await self.send_to_all_players(FuncEnum.text, text=m_result_night(self.players))  # логика тут
+            # print('Выборы ночи:')
+            # for player in self.players:
+            #     print(
+            #         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
+            # print()
 
-        print('Итоги ночи:')
-        for player in self.players:
-            print(
-                f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
-        print()
+            self.phase = GamePhase.day_discuss
+            self.revaluation_night()
+            await self.send_to_all_players(FuncEnum.text, text=m_result_night(self.players))  # логика тут
 
-        for player in self.players:
-            if player.choosen_kill > 0:
-                player.role = Role.observer
-                await send_message(player.id, FuncEnum.keyboard, text=lex['kill_player'], keyboard=keyboard_observer())
-            elif player.choosen_godfather > 0:
-                player.mute = True
-            player.voted = False
-            player.medium_who_contact = None
-            player.choosen_kill = 0
-            player.choosen_doctor = 0
-            player.choosen_beauty = 0
-            player.choosen_godfather = 0
-        if not await self.check_end():
-            await asyncio.sleep(self.time_speak)
-            await self.start_voting()
+            # print('Итоги ночи:')
+            # for player in self.players:
+            #     print(
+            #         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
+            # print()
+
+            for player in self.players:
+                if player.choosen_kill > 0:
+                    player.role = Role.observer
+                    await send_message(player.id, FuncEnum.keyboard, text=lex['kill_player'], keyboard=keyboard_observer())
+                elif player.choosen_godfather > 0:
+                    player.mute = True
+                elif player.choosen_barman > 0:
+                    player.drunk = True
+                player.voted = False
+                player.medium_who_contact = None
+                player.choosen_barman = 0
+                player.choosen_kill = 0
+                player.choosen_doctor = 0
+                player.choosen_beauty = 0
+                player.choosen_godfather = 0
+            if not await self.check_end():
+                await asyncio.sleep(self.time_speak)
+                await self.start_voting()
 
     def revaluation_evening(self):
         for player in self.players:
@@ -229,9 +250,12 @@ class Game:
                     player.target.choosen_doctor -= 1
                 elif player.role is Role.godfather:
                     player.target.choosen_godfather -= 1
+                elif player.role is Role.barman:
+                    player.target.choosen_barman -= 1
 
     async def start_voting(self):
         self.phase = GamePhase.day_voting
+        self.voting_count = 0
 
         predicate_not_ghost = lambda player: player.role is not Role.observer
         predicate_not_mute = lambda player: not player.mute and predicate_not_ghost(player)
@@ -245,30 +269,34 @@ class Game:
         await self.exclusion()
 
     async def exclusion(self):
-        max_voices = self.skip_count
-        target = []
+        print('Должно быть изгнание')
+        if self.phase is GamePhase.day_voting:
 
-        print('Итоги голосования:')
-        for player in self.players:
-            print(f'{Bot_db.get_username(player.id)} - {player.voices}')
-        print(f'skip - {self.skip_count}')
-        print()
+            self.phase = GamePhase.day_exclusion
+            max_voices = self.skip_count
+            target = []
 
-        self.skip_count = 0
-        for player in self.players:
-            if player.voices > max_voices:
-                target = [player]
-                max_voices = player.voices
-            elif player.voices == max_voices:
-                target.append(player)
-            player.voices = 0
-        await self.send_to_all_players(FuncEnum.text, text=m_result_voting(target))
-        if len(target) == 1:
-            target[0].role = Role.observer
-            await send_message(target[0].id, FuncEnum.keyboard, text=lex['kill_player'], keyboard=keyboard_observer())
-        await asyncio.sleep(2)
-        if not await self.check_end():
-            await self.evening()
+            # print('Итоги голосования:')
+            # for player in self.players:
+            #     print(f'{Bot_db.get_username(player.id)} - {player.voices}')
+            # print(f'skip - {self.skip_count}')
+            # print()
+
+            self.skip_count = 0
+            for player in self.players:
+                if player.voices > max_voices:
+                    target = [player]
+                    max_voices = player.voices
+                elif player.voices == max_voices:
+                    target.append(player)
+                player.voices = 0
+            await self.send_to_all_players(FuncEnum.text, text=m_result_voting(target))
+            if len(target) == 1:
+                target[0].role = Role.observer
+                await send_message(target[0].id, FuncEnum.keyboard, text=lex['kill_player'], keyboard=keyboard_observer())
+            await asyncio.sleep(2)
+            if not await self.check_end():
+                await self.evening()
 
     async def check_end(self):
         mafia = 0
@@ -312,11 +340,13 @@ class Player:
         self.choosen_doctor: int = 0
         self.choosen_beauty: int = 0
         self.choosen_godfather: int = 0
+        self.choosen_barman: int = 0
         self.target: Player = None
         self.old_target: Player = None
         self.medium_who_contact: Player = None
         self.choosed: bool = False
         self.mute: bool = False
+        self.drunk: bool = False
         self.voted: bool = False
         self.voices: int = 0
 
@@ -334,6 +364,7 @@ class Player:
 class GamePhase(Enum):
     day_discuss = auto()
     day_voting = auto()
+    day_exclusion = auto()
     night = auto()
     evening = auto()
 
@@ -383,8 +414,10 @@ class WaitingList:
             roles = [Role.killer, Role.doctor, Role.sheriff]
         elif size in [4, 5]:
             roles = [Role.killer, Role.doctor, Role.sheriff, Role.beauty]
-        elif size in range(6, 9):
+        elif size in range(6, 8):
             roles = [Role.killer, Role.killer, Role.doctor, Role.godfather]
+        elif size == 8:
+            roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff, Role.sheriff]
         elif size == 9:
             roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff,
                      Role.doctor]

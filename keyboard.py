@@ -31,7 +31,8 @@ def keyboard_rules():
     buttons_text = [['button_main_menu'],
                     ['button_rules_common', 'button_rules_ghost', 'button_rules_killer'],
                     ['button_rules_doctor', 'button_rules_sheriff', 'button_rules_beauty'],
-                    ['button_rules_godfather', 'button_rules_immortal', 'button_rules_medium']]
+                    ['button_rules_godfather', 'button_rules_immortal', 'button_rules_medium'],
+                    ['button_rules_barman']]
     return keyboard_builder(buttons_text)
 
 
@@ -70,7 +71,7 @@ def _inline_ingame_keyboard_builder(players, predicate, size: int = 3, skipped: 
         buttons.append(InlineKeyboardButton(text=lex['skip'], callback_data='skip'))
     for player in players:
         if predicate(player):
-            buttons.append(InlineKeyboardButton(text=f'{Bot_db.get_username(player.id)}'# ({str(player.role)})'
+            buttons.append(InlineKeyboardButton(text=f'{Bot_db.get_username(player.id)} ({str(player.role)})'
             , callback_data=player.id))
             if len(buttons) == size:
                 lines.append(buttons)

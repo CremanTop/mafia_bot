@@ -127,7 +127,7 @@ async def sticker_handler(message: Message):
 async def text_message(message: Message):
     uid = message.from_user.id
     text = message.text
-    buttons_text = (lex['button_rules_common'], lex['button_rules_ghost'], lex['button_rules_killer'], lex['button_rules_doctor'], lex['button_rules_sheriff'], lex['button_rules_beauty'], lex['button_rules_godfather'], lex['button_rules_immortal'], lex['button_rules_medium'])
+    buttons_text = (lex['button_rules_common'], lex['button_rules_ghost'], lex['button_rules_killer'], lex['button_rules_doctor'], lex['button_rules_sheriff'], lex['button_rules_beauty'], lex['button_rules_godfather'], lex['button_rules_immortal'], lex['button_rules_medium'], lex['button_rules_barman'])
 
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
@@ -234,6 +234,9 @@ async def text_message(message: Message):
         elif text == lex['button_rules_immortal']:
             adv = lex['rules_common'] + ' ' + lex['rules_immortal']
             role = Role.immortal
+        elif text == lex['button_rules_barman']:
+            adv = lex['rules_barman']
+            role = Role.barman
         await message.answer(f'{lex["team"]} {str(role.get_team())}.\n\n{mes}{adv}')
 
     elif stage == 3:
@@ -280,6 +283,13 @@ async def player_chat(message: Message,
                       sticker: str = None,
                       voice: str = None):
     uid = message.from_user.id
+    uname = Bot_db.get_username(uid)
+
+    def drunk_message(text):
+        list_text = list(text)
+        random.shuffle(list_text)
+        return ''.join(list_text).strip()
+
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
     game = Game.get_game(Bot_db.get_game(uid))
@@ -296,13 +306,19 @@ async def player_chat(message: Message,
             elif player.mute:
                 await message.answer(lex['this_mute'])
             else:
-                await game.send_to_all_players_without(uid, func=func, text=text, sticker=sticker, voice=voice)
+                if player.drunk:
+                    if text not in (f'{uname} говорит.', f'{uname} отправил(а):', None):
+                        index = len(uname) + 11
+                        text = text[:index] + drunk_message(text[index:])
+                        await game.send_to_all_players_without(uid, func=FuncEnum.text, text=text)
+                else:
+                    await game.send_to_all_players_without(uid, func=func, text=text, sticker=sticker, voice=voice)
         elif game.phase in (GamePhase.night, GamePhase.evening):
             if player.role.get_team() is Team.mafia:
                 predicate = lambda player: player.id != uid and player.role.get_team() is Team.mafia
                 await game.send_to_all_players(func=func, predicate=predicate, text=text, sticker=sticker, voice=voice)
             elif player.role is Role.observer and player.medium_who_contact is not None and text is not None:
-                if text not in (f'{Bot_db.get_username(uid)} говорит.', f'{Bot_db.get_username(uid)} отправил(а):'):
+                if text not in (f'{uname} говорит.', f'{uname} отправил(а):'):
                     await send_message(player.medium_who_contact.id, func=FuncEnum.text, text=text)
             elif player.role is Role.medium and player.target is not None:
                 await send_message(player.target.id, func=func, text=text, sticker=sticker, voice=voice)
@@ -347,6 +363,15 @@ async def process_button_press(callback: CallbackQuery):
         game.size_game += 1
         await callback.message.edit_text(m_game_setting(game), reply_markup=kb_game_setting(game))
 
+    async def handler_voting(game: Game, player: Player, text: str):
+        await callback.message.answer(text)
+        player.voted = True
+        count_must_vote = len(tuple(filter(lambda player: player.role is not Role.observer and not player.mute and not player.virtual, game.players)))
+        game.voting_count += 1
+        print(game.voting_count, count_must_vote)
+        if game.voting_count >= count_must_vote:
+            await game.exclusion()
+
     async def close_editor(game):
         games_in_setup.remove(game)
         waiting_lists.append(game)
@@ -358,8 +383,8 @@ async def process_button_press(callback: CallbackQuery):
             await callback.message.edit_text(lex['your_code'] + str(code))
         await game.add_player(uid)
 
-        for i in range(game.size_game - 1):
-            await game.add_player(i)
+        # for i in range(game.size_game - 2):
+        #     await game.add_player(i)
 
     if stage == 1:
         keys = tuple(Cdata.__members__.values())
@@ -441,7 +466,8 @@ async def process_button_press(callback: CallbackQuery):
 
         if game.phase is GamePhase.evening:
             if target is not None and not player.choosed:
-                if target == player.old_target:
+                print(target, player.old_target)
+                if target is player.old_target:
                     await callback.message.answer(lex['eq_old_tg'])
                 else:
                     if player.role is Role.beauty:
@@ -451,16 +477,26 @@ async def process_button_press(callback: CallbackQuery):
                         target.medium_who_contact = player
                         await send_message(target.id, FuncEnum.text, text=lex['medium_connect_to'])
                         await callback.message.answer(lex['medium_connect_from'])
+                    elif player.role is Role.barman:
+                        target.choosen_barman += 1
+                        await callback.message.answer(lex['choose'] + t_name + lex['wait'])
 
-                    if player.role in (Role.medium, Role.beauty):
+                    if player.role in (Role.medium, Role.beauty, Role.barman):
                         player.choosed = True
                         player.target = target
+
+                        count_must_vote = len(tuple(filter(lambda player: player.role in (Role.beauty, Role.medium, Role.barman) and not player.virtual, game.players)))
+                        game.voting_count += 1
+                        print(game.voting_count, count_must_vote)
+                        if game.voting_count >= count_must_vote:
+                            await game.night()
 
                     await callback.message.delete()
 
         elif game.phase is GamePhase.night:
             if target is not None and not player.choosed:
-                if target == player.old_target:
+                print(target, player.old_target)
+                if target is player.old_target:
                     await callback.message.answer(lex['eq_old_tg'])
                 else:
                     if player.role is Role.killer:
@@ -480,27 +516,33 @@ async def process_button_press(callback: CallbackQuery):
                             await callback.message.answer(lex['choose'] + t_name + '. ' + lex['his_role'] + str(target.role) + lex['wait'])
                     player.choosed = True
                     player.target = target
-
                     await callback.message.delete()
+
+                    count_must_vote = len(tuple(filter(lambda player: player.role in (Role.doctor, Role.sheriff, Role.killer, Role.godfather) and not player.virtual, game.players)))
+                    if player.role in (Role.doctor, Role.sheriff, Role.killer, Role.godfather):
+                        game.voting_count += 1
+                    print(game.voting_count, count_must_vote)
+                    if game.voting_count >= count_must_vote:
+                        await game.setup_day()
 
         elif game.phase is GamePhase.day_voting:
             await callback.message.delete()
             if player.mute:
                 await callback.answer(text=lex['no_voted'])
             elif not player.voted:
+                if player.drunk:
+                    target = random.choices([target, player, random.choice(game.players)], weights=[2, 1, 1], k=1)[0]
                 if target is not None:
                     if player.role != Role.observer:
                         target.voices += 1
-                        await callback.message.answer(lex['vote'] + t_name + '.')
-                    player.voted = True
+                        await handler_voting(game, player, lex['vote'] + t_name + '.')
+
                 elif data == 'skip':
                     game.skip_count += 1
-                    await callback.message.answer(lex['skip_m'])
-                    player.voted = True
+                    await handler_voting(game, player, lex['skip_m'])
+
             else:
                 await callback.answer(text=lex['already_voted'])
-
-
 #
 #
 # keep_alive.keep_alive()

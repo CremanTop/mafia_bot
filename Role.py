@@ -27,6 +27,7 @@ class Role(Enum):
     godfather = auto()
     immortal = auto()
     medium = auto()
+    barman = auto()
 
     def __str__(self):
         if self is Role.common:
@@ -45,22 +46,17 @@ class Role(Enum):
             return 'бессмертный ♾'
         elif self is Role.medium:
             return 'медиум 🪬'
+        elif self is Role.barman:
+            return 'бармен 🍺'
         else:
             return '[ошибка]'
 
     def get_team(self):
         if self in (Role.common, Role.doctor, Role.sheriff, Role.beauty, Role.immortal, Role.medium):
             return Team.citizen
-        elif self in (Role.killer, Role.godfather):
+        elif self in (Role.killer, Role.godfather, Role.barman):
             return Team.mafia
         elif self is Role.observer:
             return Team.ghost
         else:
             return None
-
-# s = 'Я строка, новая строкаааа'
-# l_s = list(s)
-# random.shuffle(l_s)
-# s = ''.join(l_s).strip()
-#
-# print(s)
