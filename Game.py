@@ -16,19 +16,22 @@ games_in_setup = []
 
 
 class Game:
-    def __init__(self, waiting_list, private: bool = False):
+    def __init__(self, waiting_list, manager: int, private: bool = False):
         self.id: int = waiting_list.id
+        self.size: int = waiting_list.size_game
+        self.manager: int = manager
         self.private: bool = private
         self.roles: list[Role] = waiting_list.game_roles
-        self.players_id: list[int] = waiting_list.players_id
+        self.players_id: list[int] = list(waiting_list.players_id.keys())
         self.players: list[Player] = []
         self.phase: GamePhase = GamePhase.day_exclusion
         self.skip_count: int = 0
         self.voting_count: int = 0
-        self.time_evening: int = 15  # 20
-        self.time_night: int = 15  # 30
-        self.time_speak: int = 10  # 90
+        self.time_evening: int = 20  # 20
+        self.time_night: int = 30  # 30
+        self.time_speak: int = 15  # 90
         self.time_voting: int = 20  # 20
+        self.time_alert: int = 5  # 5 должно быть меньше всех остальных
 
     def get_player(self, user_id):
         for player in self.players:
@@ -69,10 +72,10 @@ class Game:
         for chat_id in players:
             # if chat_id == 1662143212:
             #     assign(chat_id, Role.barman)
-            # elif chat_id == 2130716911:
-            #     assign(chat_id, Role.barman)
-            # else:
-            assign(chat_id, Role.common)
+            if chat_id == 2130716911:
+                assign(chat_id, Role.don)
+            else:
+                assign(chat_id, Role.common)
 
     async def send_to_all_players(self,
                                   func,
@@ -150,21 +153,25 @@ class Game:
                 player.old_target = player.target
                 player.target = None
 
-                if player.role is Role.beauty:
-                    await send_message(player.id, FuncEnum.text, text=lex['evening_beauty'],
-                                       keyboard=kb_without_player(self.players, player))
-                elif player.role is Role.medium:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['evening_medium'],
-                                       keyboard=kb_role(self.players, Role.observer))
-                elif player.role is Role.barman:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['evening_barman'],
-                                       keyboard=kb_without_player(self.players, player))
+                match player.role:
+                    case Role.beauty:
+                        await send_message(player.id, FuncEnum.text, text=lex['evening_beauty'],
+                                           keyboard=kb_without_player(self.players, player))
+                    case Role.medium:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['evening_medium'],
+                                           keyboard=kb_role(self.players, Role.observer))
+                    case Role.barman:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['evening_barman'],
+                                           keyboard=kb_without_player(self.players, player))
+                    case _:
+                        await send_message(player.id, func=FuncEnum.text, text=lex['evening_common'])
 
-            await self.send_to_all_players_without_roles(roles=(Role.beauty, Role.medium, Role.barman), func=FuncEnum.text,
-                                                         text=lex['evening_common'])
-
-            await asyncio.sleep(self.time_evening)
-            await self.night()
+            await asyncio.sleep(self.time_evening - self.time_alert)
+            if self.phase is GamePhase.evening:
+                predicate = lambda player: player.role in (Role.beauty, Role.medium, Role.barman) and not player.choosed
+                await self.send_to_all_players(func=FuncEnum.text, predicate=predicate, text=m_time_alert(self.time_alert, 0))
+                await asyncio.sleep(self.time_alert)
+                await self.night()
 
     async def night(self):
         print('Должна быть ночь')
@@ -174,42 +181,51 @@ class Game:
             self.phase = GamePhase.night
             self.revaluation_evening()
             for player in self.players:
-                if player.role in (Role.common, Role.observer, Role.immortal, Role.beauty, Role.barman):
-                    await send_message(player.id, FuncEnum.text, text=lex['night_common'])
-                elif player.role is Role.killer:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_killer'],
-                                       keyboard=kb_without_team(self.players, Team.mafia))
-                elif player.role is Role.doctor:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_doctor'],
-                                       keyboard=kb_all_players(self.players))
-                elif player.role is Role.sheriff:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_sheriff'],
-                                       keyboard=kb_without_player(self.players, player))
-                elif player.role is Role.godfather:
-                    await send_message(player.id, FuncEnum.keyboard, text=lex['night_godfather'],
-                                       keyboard=kb_without_player(self.players, player))
-            await asyncio.sleep(self.time_night)
-            await self.setup_day()
+                match player.role:
+                    case Role.killer:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['night_killer'],
+                                           keyboard=kb_without_team(self.players, Team.mafia))
+                    case Role.doctor:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['night_doctor'],
+                                           keyboard=kb_all_players(self.players))
+                    case Role.sheriff:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['night_sheriff'],
+                                           keyboard=kb_without_player(self.players, player))
+                    case Role.godfather:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['night_godfather'],
+                                           keyboard=kb_without_player(self.players, player))
+                    case Role.don:
+                        await send_message(player.id, FuncEnum.keyboard, text=lex['night_don'],
+                                           keyboard=kb_without_player(self.players, player))
+                    case _:
+                        await send_message(player.id, FuncEnum.text, text=lex['night_common'])
+
+            await asyncio.sleep(self.time_night - self.time_alert)
+            if self.phase is GamePhase.night:
+                predicate = lambda player: player.role in (Role.doctor, Role.sheriff, Role.killer, Role.godfather, Role.don) and not player.choosed
+                await self.send_to_all_players(func=FuncEnum.text, predicate=predicate, text=m_time_alert(self.time_alert, 1))
+                await asyncio.sleep(self.time_alert)
+                await self.setup_day()
 
     async def setup_day(self):
         print('Должен быть день')
         if self.phase is GamePhase.night:
 
-            # print('Выборы ночи:')
-            # for player in self.players:
-            #     print(
-            #         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
-            # print()
+            print('Выборы ночи:')
+            for player in self.players:
+                print(
+                    f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar)')
+            print()
 
             self.phase = GamePhase.day_discuss
             self.revaluation_night()
             await self.send_to_all_players(FuncEnum.text, text=m_result_night(self.players))  # логика тут
 
-            # print('Итоги ночи:')
-            # for player in self.players:
-            #     print(
-            #         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g)')
-            # print()
+            print('Итоги ночи:')
+            for player in self.players:
+                print(
+                    f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar)')
+            print()
 
             for player in self.players:
                 if player.choosen_kill > 0:
@@ -227,8 +243,11 @@ class Game:
                 player.choosen_beauty = 0
                 player.choosen_godfather = 0
             if not await self.check_end():
-                await asyncio.sleep(self.time_speak)
-                await self.start_voting()
+                await asyncio.sleep(self.time_speak - self.time_alert * 2)
+                if self.phase is GamePhase.day_discuss:
+                    await self.send_to_all_players(func=FuncEnum.text, text=m_time_alert(self.time_alert * 2, 2))
+                    await asyncio.sleep(self.time_alert * 2)
+                    await self.start_voting()
 
     def revaluation_evening(self):
         for player in self.players:
@@ -241,17 +260,19 @@ class Game:
     def revaluation_night(self):
         # roles = [player.role for player in self.players]
         for player in self.players:
-            if player.target is None:
+            target = player.target
+            if target is None:
                 continue
             if player.choosen_beauty:
-                if player.role is Role.killer:
-                    player.target.choosen_kill -= 1
-                elif player.role is Role.doctor:
-                    player.target.choosen_doctor -= 1
-                elif player.role is Role.godfather:
-                    player.target.choosen_godfather -= 1
-                elif player.role is Role.barman:
-                    player.target.choosen_barman -= 1
+                match player.role:
+                    case Role.killer:
+                        target.choosen_kill -= 1
+                    case Role.doctor:
+                        target.choosen_doctor -= 1
+                    case Role.godfather:
+                        target.choosen_godfather -= 1
+                    case Role.barman:
+                        target.choosen_barman -= 1
 
     async def start_voting(self):
         self.phase = GamePhase.day_voting
@@ -265,8 +286,13 @@ class Game:
                                        keyboard=kb_all_players(self.players, skipped=True))
         await self.send_to_all_players(FuncEnum.text, predicate_mute, text=lex['start_voting'])
         await self.send_to_all_players_to_roles((Role.observer,), FuncEnum.text, text=lex['start_voting'])
-        await asyncio.sleep(self.time_voting)
-        await self.exclusion()
+
+        await asyncio.sleep(self.time_voting - self.time_alert)
+        if self.phase is GamePhase.day_voting:
+            predicate = lambda player: not player.voted and predicate_not_mute(player)
+            await self.send_to_all_players(func=FuncEnum.text, predicate=predicate, text=m_time_alert(self.time_alert, 3))
+            await asyncio.sleep(self.time_alert)
+            await self.exclusion()
 
     async def exclusion(self):
         print('Должно быть изгнание')
@@ -276,11 +302,11 @@ class Game:
             max_voices = self.skip_count
             target = []
 
-            # print('Итоги голосования:')
-            # for player in self.players:
-            #     print(f'{Bot_db.get_username(player.id)} - {player.voices}')
-            # print(f'skip - {self.skip_count}')
-            # print()
+            print('Итоги голосования:')
+            for player in self.players:
+                print(f'{Bot_db.get_username(player.id)} - {player.voices}')
+            print(f'skip - {self.skip_count}')
+            print()
 
             self.skip_count = 0
             for player in self.players:
@@ -321,14 +347,17 @@ class Game:
         for player in self.players:
             if player.virtual:
                 continue
-            Bot_db.set_stage(player.id, 1)
-            Bot_db.set_game(player.id, -1)
+            Bot_db.set_stage(player.id, 4)
             if (player.role.get_team() is Team.citizen and city_win) or (
                     player.role.get_team() is Team.mafia and not city_win):
                 Bot_db.set_wins(player.id, Bot_db.get_wins(player.id) + 1)
                 roles += f'{Bot_db.get_username(player.id)} - {str(player.role)}\n'
-        await self.send_to_all_players(FuncEnum.keyboard, text=text + roles, keyboard=keyboard_main())
+        await self.send_to_all_players(FuncEnum.text, text=text + roles)
         games.pop(games.index(self))
+        w_list = WaitingList(self.size, self.manager, self.private)
+        waiting_lists.append(w_list)
+        for player in self.players:
+            await w_list.add_player(player.id, False)
 
 
 class Player:
@@ -372,57 +401,90 @@ class GamePhase(Enum):
 class WaitingList:
     counter = 0
 
-    def __init__(self, size: int, private: bool = False):
-        self.players_id: list[int] = []
+    def __init__(self, size: int, manager: int, private: bool = False):
+        self.players_id: dict[int, bool] = {}
+        self.manager: int = manager
         self.size_game: int = size
-        self.game_roles: list[Role] = self._get_roles(size)
+        self.game_roles: list[Role] = self.get_roles(size)
         self.id: int = WaitingList.counter
         self.private: bool = private
+        self.wait_for_confirm: bool = False
         WaitingList.counter += 1
 
-    def is_full(self):
+    def is_full(self):  # хватает ли людей
         return len(self.players_id) >= self.size_game
 
-    async def add_player(self, player_id):
+    def is_ready(self):  # все ли готовы
+        return all(self.players_id.values())
+
+    async def add_player(self, player_id: int, confirm: bool = True):
         Bot_db.set_stage(player_id, 4)
         Bot_db.set_game(player_id, self.id)
-        if self.players_id.count(player_id) == 0:
-            self.players_id.append(player_id)
-            await self.send_all(
-                f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} подключился.')
-            if self.is_full():
+        if tuple(self.players_id.keys()).count(player_id) == 0:
+            self.players_id[player_id] = confirm
+            if confirm:
+                await self.send_all(f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} подключился.')
+            await self.preparedness(player_id, True)
+
+    async def remove_player(self, player_id: int):
+        Bot_db.set_stage(player_id, 1)
+        await send_message(player_id, FuncEnum.keyboard, text='Вы отключились от игры.', keyboard=keyboard_main())
+        self.players_id.pop(player_id)
+        await self.send_all(f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} отключился или был исключён.')
+        self.wait_for_confirm = False
+        if len(self.players_id) == 0 and waiting_lists.__contains__(self):
+            waiting_lists.remove(self)
+
+    async def kick_unready(self):
+        await asyncio.sleep(25)
+        if self.wait_for_confirm:
+            players = tuple(self.players_id.keys())
+            for player in players:
+                if not self.players_id[player]:
+                    await self.remove_player(player)
+
+    async def preparedness(self, player_id, show_mes: bool = False):
+        if self.is_full():
+            if self.is_ready():
                 await self.start_game()
             else:
-                await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=keyboard_cancel())
+                if show_mes:
+                    await self.send_all('Подтвердите начало игры.',
+                                        predicate=lambda player: not self.players_id[player], keyboard=keyboard_lobby())
+                    await self.send_all('Ожидаем подтверждение от всех игроков.')
+                    self.wait_for_confirm = True
+                    await self.kick_unready()
+        else:
+            await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=keyboard_cancel())
 
     async def start_game(self):
-        game = Game(self, private=self.private)
+        game = Game(self, private=self.private, manager=self.manager)
         games.append(game)
         waiting_lists.remove(self)
         await game.run()
 
-    async def send_all(self, text: str):
-        for player in self.players_id:
-            await send_message(player, FuncEnum.text, text=text)
+    async def send_all(self, text: str, predicate=lambda x: True, keyboard=None):
+        for player in self.players_id.keys():
+            if predicate(player):
+                await send_message(player, FuncEnum.keyboard, text=text, keyboard=keyboard)
 
     @staticmethod
-    def _get_roles(size: int) -> list[Role]:
-        roles = []
-        if size == 2:
-            roles = [Role.killer]
-        elif size == 3:
-            roles = [Role.killer, Role.doctor, Role.sheriff]
-        elif size in [4, 5]:
-            roles = [Role.killer, Role.doctor, Role.sheriff, Role.beauty]
-        elif size in range(6, 8):
-            roles = [Role.killer, Role.killer, Role.doctor, Role.godfather]
-        elif size == 8:
-            roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff, Role.sheriff]
-        elif size == 9:
-            roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff,
-                     Role.doctor]
-        elif size >= 10:
-            roles = [Role.killer, Role.killer, Role.killer, Role.doctor, Role.doctor, Role.sheriff, Role.beauty,
-                     Role.beauty]
+    def get_roles(size: int) -> list[Role]:
+        match size:
+            case 2:
+                roles = [Role.killer]
+            case 3:
+                roles = [Role.killer, Role.doctor, Role.sheriff]
+            case 4 | 5:
+                roles = [Role.killer, Role.doctor, Role.sheriff, Role.beauty]
+            case 6 | 7:
+                roles = [Role.killer, Role.killer, Role.doctor, Role.godfather]
+            case 8:
+                roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff, Role.sheriff]
+            case 9:
+                roles = [Role.killer, Role.killer, Role.doctor, Role.godfather, Role.beauty, Role.beauty, Role.sheriff,
+                         Role.doctor]
+            case _:
+                roles = []
 
         return roles

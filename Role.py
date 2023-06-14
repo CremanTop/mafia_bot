@@ -7,14 +7,15 @@ class Team(Enum):
     ghost = auto()
 
     def __str__(self):
-        if self is Team.citizen:
-            return 'горожане 🟢'
-        elif self is Team.mafia:
-            return 'мафия 🔴'
-        elif self is Team.ghost:
-            return 'нет команды'
-        else:
-            return '[ошибка]'
+        match self:
+            case Team.citizen:
+                return 'горожане 🟢'
+            case Team.mafia:
+                return 'мафия 🔴'
+            case Team.ghost:
+                return 'нет команды'
+            case _:
+                return '[ошибка]'
 
 
 class Role(Enum):
@@ -28,35 +29,42 @@ class Role(Enum):
     immortal = auto()
     medium = auto()
     barman = auto()
+    don = auto()
 
     def __str__(self):
-        if self is Role.common:
-            return 'мирный житель 👔'
-        elif self is Role.killer:
-            return 'убийца 🔪'
-        elif self is Role.doctor:
-            return 'доктор 💊'
-        elif self is Role.sheriff:
-            return 'шериф 🚨'
-        elif self is Role.beauty:
-            return 'красотка 💋'
-        elif self is Role.godfather:
-            return 'крёстный отец 🌹'
-        elif self is Role.immortal:
-            return 'бессмертный ♾'
-        elif self is Role.medium:
-            return 'медиум 🪬'
-        elif self is Role.barman:
-            return 'бармен 🍺'
-        else:
-            return '[ошибка]'
+        match self:
+            case Role.common:
+                return 'мирный житель 👔'
+            case Role.killer:
+                return 'убийца 🔪'
+            case Role.doctor:
+                return 'доктор 💊'
+            case Role.sheriff:
+                return 'шериф 🚨'
+            case Role.beauty:
+                return 'красотка 💋'
+            case Role.godfather:
+                return 'крёстный отец 🌹'
+            case Role.immortal:
+                return 'бессмертный ♾'
+            case Role.medium:
+                return 'медиум 🪬'
+            case Role.barman:
+                return 'бармен 🍺'
+            case Role.observer:
+                return 'призрак 👻'
+            case Role.don:
+                return 'дон 💵'
+            case _:
+                return '[ошибка]'
 
     def get_team(self):
-        if self in (Role.common, Role.doctor, Role.sheriff, Role.beauty, Role.immortal, Role.medium):
-            return Team.citizen
-        elif self in (Role.killer, Role.godfather, Role.barman):
-            return Team.mafia
-        elif self is Role.observer:
-            return Team.ghost
-        else:
-            return None
+        match self:
+            case Role.common | Role.doctor | Role.sheriff | Role.beauty | Role.immortal | Role.medium:
+                return Team.citizen
+            case Role.killer | Role.godfather | Role.barman | Role.don:
+                return Team.mafia
+            case Role.observer:
+                return Team.ghost
+            case _:
+                return None

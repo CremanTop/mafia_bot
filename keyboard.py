@@ -16,6 +16,7 @@ class Cdata(Enum):
     spubg = 'set_public_game'
     sprig = 'set_private_game'
     spg = 'subtract_player_game'
+    png = 'player_num_game'
     apg = 'add_player_game'
     ceg = 'close_editor_game'
     sr = 'subtract_role'
@@ -32,7 +33,7 @@ def keyboard_rules():
                     ['button_rules_common', 'button_rules_ghost', 'button_rules_killer'],
                     ['button_rules_doctor', 'button_rules_sheriff', 'button_rules_beauty'],
                     ['button_rules_godfather', 'button_rules_immortal', 'button_rules_medium'],
-                    ['button_rules_barman']]
+                    ['button_rules_barman', 'button_rules_don']]
     return keyboard_builder(buttons_text)
 
 
@@ -40,6 +41,12 @@ def keyboard_main():
     buttons_text = [['button_game_start'],
                     ['button_game_wait', 'button_game_list'],
                     ['button_private_game', 'button_create_game']]
+    return keyboard_builder(buttons_text)
+
+
+def keyboard_lobby():
+    buttons_text = [['button_ready'],
+                    ['button_cancel']]
     return keyboard_builder(buttons_text)
 
 
@@ -155,7 +162,7 @@ def kb_game_setting(wait_list):
         buttons = []
         if size > 3 and size > num_all_roles:
             buttons.append(add_button('➖', f'{Cdata.spg.value}{id}'))
-        buttons.append(add_button(lex['player_num'], 'none'))
+        buttons.append(add_button(lex['player_num'], f'{Cdata.png.value}{id}'))
         if size < 50:
             buttons.append(add_button('➕', f'{Cdata.apg.value}{id}'))
         return buttons
