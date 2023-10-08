@@ -30,6 +30,8 @@ class Role(Enum):
     medium = auto()
     barman = auto()
     don = auto()
+    bodyguard = auto()
+    snitch = auto()
 
     def __str__(self):
         match self:
@@ -55,14 +57,18 @@ class Role(Enum):
                 return 'призрак 👻'
             case Role.don:
                 return 'дон 💵'
+            case Role.bodyguard:
+                return 'телохранитель 🛡'
+            case Role.snitch:
+                return 'стукач 👉'
             case _:
                 return '[ошибка]'
 
     def get_team(self):
         match self:
-            case Role.common | Role.doctor | Role.sheriff | Role.beauty | Role.immortal | Role.medium:
+            case Role.common | Role.doctor | Role.sheriff | Role.beauty | Role.immortal | Role.medium | Role.bodyguard:
                 return Team.citizen
-            case Role.killer | Role.godfather | Role.barman | Role.don:
+            case Role.killer | Role.godfather | Role.barman | Role.don | Role.snitch:
                 return Team.mafia
             case Role.observer:
                 return Team.ghost

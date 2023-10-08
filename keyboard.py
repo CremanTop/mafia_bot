@@ -24,16 +24,13 @@ class Cdata(Enum):
     g = '_game'
 
 
-def button_builder(name):
-    return KeyboardButton(text=lex[name])
-
-
 def keyboard_rules():
     buttons_text = [['button_main_menu'],
                     ['button_rules_common', 'button_rules_ghost', 'button_rules_killer'],
                     ['button_rules_doctor', 'button_rules_sheriff', 'button_rules_beauty'],
                     ['button_rules_godfather', 'button_rules_immortal', 'button_rules_medium'],
-                    ['button_rules_barman', 'button_rules_don']]
+                    ['button_rules_barman', 'button_rules_don', 'button_rules_bodyguard'],
+                    ['button_rules_snitch']]
     return keyboard_builder(buttons_text)
 
 
@@ -55,12 +52,22 @@ def keyboard_cancel():
     return keyboard_builder(buttons_text)
 
 
+def keyboard_manager():
+    buttons_text = [['button_edit'],
+                    ['button_cancel']]
+    return keyboard_builder(buttons_text)
+
+
 def keyboard_observer():
     buttons_text = [['button_leave_game']]
     return keyboard_builder(buttons_text)
 
 
-def keyboard_builder(buttons_text):
+def button_builder(name):
+    return KeyboardButton(text=lex[name])
+
+
+def keyboard_builder(buttons_text: list):
     buttons = []
     for array in buttons_text:
         line = []
@@ -78,7 +85,7 @@ def _inline_ingame_keyboard_builder(players, predicate, size: int = 3, skipped: 
         buttons.append(InlineKeyboardButton(text=lex['skip'], callback_data='skip'))
     for player in players:
         if predicate(player):
-            buttons.append(InlineKeyboardButton(text=f'{Bot_db.get_username(player.id)} ({str(player.role)})'
+            buttons.append(InlineKeyboardButton(text=f'{Bot_db.get_username(player.id)}'# ({str(player.role)})'
             , callback_data=player.id))
             if len(buttons) == size:
                 lines.append(buttons)
@@ -119,7 +126,7 @@ def _kb_games(games: list, index: int, data_game: str, data_index: str):
     two_line = []
     i = 1
     for game in games:
-        if not game.private:
+        if not game.private and not game.pause:
             if index * size < i <= (index + 1) * size:
                 buttons.append(InlineKeyboardButton(text=str(i), callback_data=f'{data_game}{str(game.id)}'))
             i += 1

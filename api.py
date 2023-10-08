@@ -1,6 +1,7 @@
+import json
 from enum import Enum
 
-from aiogram.types import MediaGroup
+from aiogram.types import MediaGroup, Message
 from aiogram.types.base import TelegramObject
 from aiogram.utils.exceptions import WrongFileIdentifier, BotBlocked, BadRequest
 
@@ -47,7 +48,7 @@ async def send_message(chat_id: int,
     except WrongFileIdentifier:
         print('Неправильный идентификатор файла!')
     except BadRequest:
-        #print('Неправильный идентификатор файла!')
+        #print('Неправильный запрос!')
         pass
     except BotBlocked:
         print('Бот заблокирован у ' + str(chat_id))
@@ -57,7 +58,7 @@ async def send_message(chat_id: int,
 
 async def mailing(bot_db: BotDB,
                   func,
-                  pred=None,
+                  pred=lambda x: True,
                   text: str = None,
                   keyboard: TelegramObject = None,
                   media: MediaGroup = None,
@@ -66,19 +67,141 @@ async def mailing(bot_db: BotDB,
     """Отправляет сообщение всем пользователям в базе данных"""
     for user in bot_db.get_users():
         chat_id = user[1]
-        if pred is not None:
-            if pred(user):
-                await send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice)
-        else:
+        if pred(user):
             await send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice)
 
 
-def media_generate(text: str = None, *photos) -> MediaGroup:
-    mediaGroup = MediaGroup()
+class MGroup:
+    def __init__(self, path: str, name: str, mid: str) -> None:
+        self.path: str = path
+        self.name: str = name
+        self.id: str = mid
+
+        media_def = {
+            'photo': [],
+            'video': [],
+            'text': ''
+        }
+
+        data: dict = JFile.read_file(path, name)
+        groups: dict = data.get('media')
+
+        if groups.get(mid) is None:
+            groups[mid] = media_def.copy()
+            JFile.write_file(path, name, data)
+
+    def _update(self, func_up, m_type: str, value: str):
+        data: dict = JFile.read_file(self.path, self.name)
+        media_group = data['media'][self.id]
+        media_group = func_up(media_group, m_type, value)
+        data['media'][self.id] = media_group
+        JFile.write_file(self.path, self.name, data)
+
+    def add_media(self, media_type: str, media: str) -> None:
+        def func(group: dict, m_type: str, val: str) -> dict:
+            if not group[m_type].__contains__(val):
+                group[m_type].append(val)
+            return group
+
+        self._update(func, media_type, media)
+
+    def add_photo(self, photo: str) -> None:
+        self.add_media('photo', photo)
+
+    def add_video(self, video: str) -> None:
+        self.add_media('video', video)
+
+    def set_text(self, text: str) -> None:
+        def func(group: dict, m_type: str, val: str) -> dict:
+            group[m_type] = val
+            return group
+
+        self._update(func, 'text', text)
+
+
+class JFile:
+    def __init__(self, path: str, name: str) -> None:
+        self.path: str = path
+        self.name: str = name
+
+        if len(self.read_file(path, name)) == 0:
+            self._def_value(path, name)
+
+    @staticmethod
+    def write_file(path: str, name: str, data: dict) -> None:
+        with open(f'{path}/{name}.json', 'w') as w_file:
+            json.dump(data, w_file, indent=4)
+
+    @staticmethod
+    def read_file(path: str, name: str) -> dict:
+        try:
+            with open(f'{path}/{name}.json', 'r') as file:
+                data: dict = json.load(file)
+                return data
+        except FileNotFoundError:
+            JFile._def_value(path, name)
+            return JFile.read_file(path, name)
+
+    @staticmethod
+    def _def_value(path: str, name: str) -> None:
+        init_dict: dict = {
+            'media': {}
+        }
+        JFile.write_file(path, name, init_dict)
+
+    def read(self) -> dict:
+        return self.read_file(self.path, self.name)
+
+    def write(self, data: dict) -> None:
+        self.write_file(self.path, self.name, data)
+
+    def get_media_group(self, id_media: str) -> MGroup:
+        return MGroup(self.path, self.name, id_media)
+
+
+def media_generate(group: MGroup) -> MediaGroup:
+    final_mediaGroup = MediaGroup()
     begin = 0
-    if text is not None:
-        mediaGroup.attach({'media': photos[0], 'type': 'photo', 'caption': text})
+
+    medias: dict = JFile.read_file(group.path, group.name).get('media').get(group.id)
+    media_id: list[tuple[str, str]] = []
+    types = ('photo', 'video')
+    for ty in types:
+        for media in medias.get(ty):
+            media_id.append((media, ty))
+    caption = medias.get('text')
+    if caption:
+        if caption[:9] == 'Рассылка:':
+            caption = caption[9:].strip()
+        final_mediaGroup.attach({'media': media_id[0][0], 'type': media_id[0][1], 'caption': caption})
         begin = 1
-    for i in range(begin, len(photos)):
-        mediaGroup.attach({'media': photos[i], 'type': 'photo'})
-    return mediaGroup
+    for i in range(begin, len(media_id)):
+        final_mediaGroup.attach({'media': media_id[i][0], 'type': media_id[i][1]})
+    return final_mediaGroup
+
+
+path: str = 'files'
+name: str = 'mediaGroups'
+
+
+async def media_collector(message: Message) -> MGroup:
+    gid = message.media_group_id
+    media, m_type = '', ''
+    global send
+    send = True
+
+    if len(message.photo) > 0:
+        media = message.photo[0].file_id
+        m_type = 'photo'
+    elif message.video:
+        media = message.video.file_id
+        m_type = 'video'
+
+    if gid:
+        media_group: MGroup = JFile(path, name).get_media_group(gid)
+        media_group.add_media(m_type, media)
+        if message.caption:
+            media_group.set_text(message.caption)
+        await message.answer('media uploaded')
+
+        return media_group

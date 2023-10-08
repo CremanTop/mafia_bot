@@ -1,0 +1,62 @@
+{
+    "2130716911": {
+        "players_id": {
+            "0": true,
+            "1": true
+        },
+        "manager": 2130716911,
+        "size_game": 4,
+        "game_roles": [
+            3,
+            4,
+            5,
+            6
+        ],
+        "id": 2,
+        "private": false,
+        "wait_for_confirm": false,
+        "pause": false
+    },
+    "102130716911": {
+        "players_id": {
+            "0": true,
+            "1": true,
+            "2": true,
+            "3": true,
+            "2130716911": true,
+            "4": true
+        },
+        "manager": 2130716911,
+        "size_game": 7,
+        "game_roles": [
+            3,
+            3,
+            4,
+            7
+        ],
+        "id": 1,
+        "private": false,
+        "wait_for_confirm": false,
+        "pause": false
+    },
+    "1906460474": {
+        "players_id": {
+            "1906460474": true,
+            "0": true,
+            "1": true,
+            "2": true
+        },
+        "manager": 1906460474,
+        "size_game": 6,
+        "game_roles": [
+            3,
+            3,
+            4,
+            7
+        ],
+        "id": 30,
+        "private": false,
+        "wait_for_confirm": false,
+        "pause": false
+    }
+}
