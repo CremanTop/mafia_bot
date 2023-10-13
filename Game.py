@@ -8,6 +8,7 @@ from typing import Final, Self, Callable
 from aiogram.types import ReplyKeyboardRemove, MediaGroup
 from aiogram.types.base import TelegramObject
 
+from Client import UserStatus as Us
 from modules_import import *
 from libs.api import FuncEnum, send_message
 from keyboard import kb_without_player, kb_role, kb_without_team, kb_all_players, keyboard_observer, keyboard_main, \
@@ -45,7 +46,9 @@ class Game:
                 return player
 
     @staticmethod
-    def get_game(game_id: int) -> Self:
+    def get_game(game_id: int) -> Self | None:
+        if game_id == -1:
+            return
         for game in games:
             if game.id == game_id:
                 return game
@@ -55,7 +58,7 @@ class Game:
         await self.send_to_all_players(FuncEnum.keyboard, text=m_start_game(self.players),
                                        keyboard=ReplyKeyboardRemove())
         for player in self.players:
-            Bot_db.set_stage(player.id, 2)
+            Bot_db.set_stage(player.id, Us.ingame.value)
             asyncio.create_task(send_message(player.id, FuncEnum.text, text=m_player_role(player)))
             if player.role.get_team() is Team.mafia:
                 asyncio.create_task(send_message(player.id, FuncEnum.text, text=m_team_killers(player, self.players)))
@@ -395,7 +398,7 @@ class Game:
         for player in self.players:
             if player.virtual:
                 continue
-            Bot_db.set_stage(player.id, 4)
+            Bot_db.set_stage(player.id, Us.lobby.value)
             if (player.role.get_team() is Team.citizen and city_win) or (
                     player.role.get_team() is Team.mafia and not city_win):
                 Bot_db.set_wins(player.id, Bot_db.get_wins(player.id) + 1)
@@ -439,7 +442,7 @@ class WaitingList:
 
     async def add_player(self, player_id: int, confirm: bool = True, message: bool = True):
         if len(self.players_id) < self.size_game:
-            Bot_db.set_stage(player_id, 4)
+            Bot_db.set_stage(player_id, Us.lobby.value)
             Bot_db.set_game(player_id, self.id)
             if tuple(self.players_id.keys()).count(player_id) == 0:
                 self.players_id[player_id] = confirm
@@ -448,13 +451,13 @@ class WaitingList:
                         f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} подключился.')
                 await self.preparedness(player_id, True)
         else:
-            Bot_db.set_stage(player_id, 1)
+            Bot_db.set_stage(player_id, Us.default.value)
             Bot_db.set_game(player_id, -1)
             pass
             # НУ ТУТ СООБЩЕНИЕ КАКОЕ-ТО КИКНУТЫМ (может лучше их сделать призраками)
 
     async def remove_player(self, player_id: int):
-        Bot_db.set_stage(player_id, 1)
+        Bot_db.set_stage(player_id, Us.default.value)
         Bot_db.set_game(player_id, -1)
         self.players_id.pop(player_id)
         await send_message(player_id, FuncEnum.keyboard, text='Вы отключились от игры.', keyboard=keyboard_main())

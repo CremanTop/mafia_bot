@@ -1,19 +1,21 @@
 # import keep_alive
+import asyncio
 import random
-from typing import Final
+from typing import Final, Callable
 
 from aiogram import executor
 from aiogram.dispatcher.filters import Command
 from aiogram.types import Message, ContentType, CallbackQuery, ReplyKeyboardRemove
 from magic_filter import F
 
-from modules_import import *
+from Client import UserStatus as Us
 from Game import games, waiting_lists, WaitingList, Game, GamePhase
-from libs.api import media_collector, media_generate, FuncEnum, send_message
 from keyboard import keyboard_main, keyboard_rules, kb_active_games, kb_wait_games, keyboard_cancel, kb_game_setting, \
     Cdata, keyboard_observer
 from lex import lex, m_leaders, m_setup_nick, m_list_game, m_list_wait, m_game_setting
+from libs.api import FuncEnum, send_message
 from middlewares import ThrottlingMiddleware, rate_limit
+from modules_import import *
 
 config: Final[Config] = Config.get()
 
@@ -27,8 +29,11 @@ async def start_command(message: Message):
     uid = message.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
-    if Bot_db.get_user_stage(uid) == 0:
+
+    if Bot_db.get_user_stage(uid) == Us.start.value:
         await message.answer(lex['command_start'])
+    else:
+        await message.answer(lex['help_main'], reply_markup=keyboard_main())
 
 
 @dp.message_handler(Command(commands=['help']))
@@ -37,16 +42,24 @@ async def help_command(message: Message):
     uid = message.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
-    stage = Bot_db.get_user_stage(uid)
-    if stage == 3:
-        Bot_db.set_stage(uid, 1)
 
-    if Bot_db.is_admin(uid):
-        pass
-    elif Bot_db.get_username(uid) == 'default' and stage == 0:
-        await message.answer(lex['help_nick'], reply_markup=ReplyKeyboardRemove())
-    elif stage == 1:
-        await message.answer(lex['help_main'], reply_markup=keyboard_main())
+    stage = Bot_db.get_user_stage(uid)
+
+    if stage == Us.waiting_code.value:
+        Bot_db.set_stage(uid, Us.default.value)
+
+    match stage:
+        case Us.start.value:
+            if Bot_db.get_username(uid) == 'default':
+                await message.answer(lex['help_nick'], reply_markup=ReplyKeyboardRemove())
+            else:
+                pass
+        case Us.default.value:
+            await message.answer(lex['help_main'], reply_markup=keyboard_main())
+        case Us.lobby.value:
+            await message.answer(lex['help_lobby'], reply_markup=keyboard_cancel())
+        case Us.ingame.value:
+            pass
 
 
 @dp.message_handler(Command(commands=['rename']))
@@ -54,10 +67,17 @@ async def rename_command(message: Message):
     uid = message.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+
     stage = Bot_db.get_user_stage(uid)
-    if stage in (1, 3):
-        Bot_db.set_stage(uid, 0)
-        await message.answer(lex['command_rename'], reply_markup=ReplyKeyboardRemove())
+
+    match stage:
+        case Us.default.value | Us.waiting_code.value:
+            Bot_db.set_stage(uid, Us.start.value)
+            await message.answer(lex['command_rename'], reply_markup=ReplyKeyboardRemove())
+        case Us.start.value:
+            await message.answer(lex['help_nick'], reply_markup=ReplyKeyboardRemove())
+        case _:
+            await message.answer(lex['rename_error'])
 
 
 @dp.message_handler(Command(commands=['leaderboard']))
@@ -65,12 +85,15 @@ async def leader_command(message: Message):
     uid = message.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+
     stage = Bot_db.get_user_stage(uid)
-    if stage == 3:
-        Bot_db.set_stage(uid, 1)
+
+    if stage == Us.waiting_code.value:
+        Bot_db.set_stage(uid, Us.default.value)
+
     champions = {}
-    for user in Bot_db.get_users():
-        champions[user[2]] = user[3]
+    for user_tuple in Bot_db.get_users():
+        champions[user_tuple[2]] = user_tuple[3]
     sorted_dict = {}
     for key in sorted(champions, key=champions.get, reverse=True):
         sorted_dict[key] = champions[key]
@@ -82,37 +105,12 @@ async def rules_command(message: Message):
     uid = message.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+
     stage = Bot_db.get_user_stage(uid)
-    if stage == 3:
-        Bot_db.set_stage(uid, 1)
+    if stage == Us.waiting_code.value:
+        Bot_db.set_stage(uid, Us.default.value)
+
     await message.answer(lex['command_rules'], reply_markup=keyboard_rules())
-
-
-@dp.message_handler(content_types=[
-    'photo'])  # (message.text and message.text.__contains__('Рассылка:')) or message.caption and message.caption.__contains__('Рассылка:')))
-@rate_limit(limit=0)
-async def mailing_handler(message: Message):
-    print('получили')
-    media = await media_collector(message)
-    if media is not None:
-        await message.answer_media_group(media_generate(await media_collector(message)))
-        # await mailing(bot_db=Bot_db, func=FuncEnum.media, media=media_generate(** media))
-
-
-# @dp.message_handler(content_types=['photo'])
-# @rate_limit(limit=0)
-# async def photo_handler(message: Message):
-#     media = await media_collector(message)
-#     if media is not None:
-#         await message.answer_media_group(media_generate(** media))
-#
-#
-# @dp.message_handler(content_types=['video'])
-# @rate_limit(limit=0)
-# async def photo_handler(message: Message):
-#     media = await media_collector(message)
-#     if media is not None:
-#         await message.answer_media_group(media_generate(** media))
 
 
 @dp.message_handler(content_types=['voice'])
@@ -141,172 +139,181 @@ async def sticker_handler(message: Message):
 async def text_message(message: Message):
     uid = message.from_user.id
     text = message.text
-    buttons_text = (
-    lex['button_rules_common'], lex['button_rules_ghost'], lex['button_rules_killer'], lex['button_rules_doctor'],
-    lex['button_rules_sheriff'], lex['button_rules_beauty'], lex['button_rules_godfather'],
-    lex['button_rules_immortal'], lex['button_rules_medium'], lex['button_rules_barman'], lex['button_rules_don'],
-    lex['button_rules_bodyguard'], lex['button_rules_snitch'])
+    buttons_rules_text = (
+        lex['button_rules_common'], lex['button_rules_ghost'], lex['button_rules_killer'], lex['button_rules_doctor'],
+        lex['button_rules_sheriff'], lex['button_rules_beauty'], lex['button_rules_godfather'],
+        lex['button_rules_immortal'], lex['button_rules_medium'], lex['button_rules_barman'], lex['button_rules_don'],
+        lex['button_rules_bodyguard'], lex['button_rules_snitch'])
 
-    if text == 'gamesp':
+    if text == 'gamesp' and Bot_db.is_admin(uid):
         print_games()
 
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+
     stage = Bot_db.get_user_stage(uid)
 
-    if stage == 0:
-        if text not in buttons_text and text not in (
-        lex['button_main_menu'], lex['button_game_start'], lex['button_game_wait'], lex['button_game_list']):
-            Bot_db.set_name(uid, text.strip())
-            Bot_db.set_stage(uid, 1)
-            await message.answer(m_setup_nick(text.strip()), reply_markup=keyboard_main())
-        else:
-            await message.answer(lex['rename_expection'], reply_markup=ReplyKeyboardRemove())
-
-    elif stage == 1:
-        if text == lex['button_main_menu']:
-            await message.answer(lex['main_menu'], reply_markup=keyboard_main())
-
-        elif text == lex['button_game_list']:
-            if len(list(filter(lambda game: not game.private, games))) > 0:
-                mes = m_list_game(0, games)
+    match stage:
+        case Us.start.value:
+            if text not in buttons_rules_text and text not in (
+                    lex['button_main_menu'], lex['button_game_start'], lex['button_game_wait'],
+                    lex['button_game_list']):
+                Bot_db.set_name(uid, text.strip())
+                Bot_db.set_stage(uid, Us.default.value)
+                await message.answer(m_setup_nick(text.strip()), reply_markup=keyboard_main())
             else:
-                mes = lex['no_active_games']
-            await message.answer(mes, reply_markup=kb_active_games(games, 0))
+                await message.answer(lex['rename_expection'], reply_markup=ReplyKeyboardRemove())
 
-        elif text == lex['button_game_wait']:
-            if len(list(filter(lambda game: not game.private and not game.pause, waiting_lists))) > 0:
-                mes = m_list_wait(0, waiting_lists)
-            else:
-                mes = lex['no_wait_games']
-            await message.answer(mes, reply_markup=kb_wait_games(waiting_lists, 0))
-            #print_games()
+        case Us.default.value:
+            if text == lex['button_main_menu']:
+                await message.answer(lex['main_menu'], reply_markup=keyboard_main())
 
-        elif text == lex['button_private_game']:
-            Bot_db.set_stage(uid, 3)
-            await message.answer(lex['req_private_game'], reply_markup=keyboard_cancel())
-
-        elif text == lex['button_create_game']:
-            waiting_list = WaitingList(6, uid)
-            waiting_list.pause = True
-            waiting_list.serialize(waiting_list, uid)
-            await message.answer(m_game_setting(waiting_list), reply_markup=kb_game_setting(waiting_list))
-
-
-
-        elif text == lex['button_game_start']:
-
-            if uid == 2130716911:
-                # w_list = WaitingList(9, False)
-                # waiting_lists.append(w_list)
-                # #await w_list.add_player(uid)
-                # for i in range(w_list.size_game - 2):
-                #     await w_list.add_player(i)
-
-                await new_virtual_game(random.randint(3, 8), uid)
-                # await new_virtual_game(4)
-
-
-
-            else:
-                min_slots = 100
-                target_list = None
-                for w_list in waiting_lists:
-                    if w_list.pause or w_list.private:
-                        continue
-                    slots = w_list.size_game - len(w_list.players_id)
-                    if slots == 1:
-                        await w_list.add_player(uid)
-                        return
-                    else:
-                        if slots < min_slots:
-                            min_slots = slots
-                            target_list = w_list
-                if target_list is not None:
-                    await target_list.add_player(uid)
+            elif text == lex['button_game_list']:
+                if len(list(filter(lambda game: not game.private, games))) > 0:
+                    mes = m_list_game(0, games)
                 else:
-                    await message.answer(lex['no_games'])
+                    mes = lex['no_active_games']
+                await message.answer(mes, reply_markup=kb_active_games(games, 0))
 
-        elif text in buttons_text:
-            mes = lex["general_rules"]
-            adv = ''
-            role = None
-            if text == lex['button_rules_common']:
-                adv = lex['rules_common']
-                role = Role.common
-            elif text == lex['button_rules_ghost']:
-                mes = ''
-                adv = lex['rules_ghost']
-                role = Role.observer
-            elif text == lex['button_rules_killer']:
-                adv = lex['rules_killer']
-                role = Role.killer
-            elif text == lex['button_rules_doctor']:
-                adv = lex['rules_doctor']
-                role = Role.doctor
-            elif text == lex['button_rules_sheriff']:
-                adv = lex['rules_sheriff']
-                role = Role.sheriff
-            elif text == lex['button_rules_beauty']:
-                adv = lex['rules_beauty']
-                role = Role.beauty
-            elif text == lex['button_rules_godfather']:
-                adv = lex['rules_godfather']
-                role = Role.godfather
-            elif text == lex['button_rules_medium']:
-                adv = lex['rules_medium']
-                role = Role.medium
-            elif text == lex['button_rules_immortal']:
-                adv = lex['rules_common'] + ' ' + lex['rules_immortal']
-                role = Role.immortal
-            elif text == lex['button_rules_barman']:
-                adv = lex['rules_barman']
-                role = Role.barman
-            elif text == lex['button_rules_don']:
-                adv = lex['rules_don']
-                role = Role.don
-            elif text == lex['button_rules_bodyguard']:
-                adv = lex['rules_bodyguard']
-                role = Role.bodyguard
-            elif text == lex['button_rules_snitch']:
-                adv = lex['rules_snitch']
-                role = Role.snitch
-            await message.answer(
-                f'{str(role)[0].upper()}{str(role)[1:]}\n\n{lex["team"]} {str(role.get_team())}.\n\n{mes}{adv}')
+            elif text == lex['button_game_wait']:
+                if len(list(filter(lambda game: not game.private and not game.pause, waiting_lists))) > 0:
+                    mes = m_list_wait(0, waiting_lists)
+                else:
+                    mes = lex['no_wait_games']
+                await message.answer(mes, reply_markup=kb_wait_games(waiting_lists, 0))
 
-    elif stage == 3:
-        if text == lex['button_cancel']:
-            Bot_db.set_stage(uid, 1)
-            await message.answer(lex['main_menu'], reply_markup=keyboard_main())
-        elif text.isdigit():
-            private_game_tuple = tuple(filter(lambda game: game.id == int(text) and game.private, waiting_lists))
-            if len(private_game_tuple) > 0:
-                private_game = private_game_tuple[0]
-                await private_game.add_player(uid)
+            elif text == lex['button_private_game']:
+                Bot_db.set_stage(uid, Us.waiting_code.value)
+                await message.answer(lex['req_private_game'], reply_markup=keyboard_cancel())
+
+            elif text == lex['button_create_game']:
+                waiting_list = WaitingList(6, uid)
+                waiting_list.pause = True
+                waiting_list.serialize(waiting_list, uid)
+                await message.answer(m_game_setting(waiting_list), reply_markup=kb_game_setting(waiting_list))
+
+
+
+            elif text == lex['button_game_start']:
+
+                if Bot_db.is_admin(uid):
+                    # w_list = WaitingList(9, False)
+                    # waiting_lists.append(w_list)
+                    # #await w_list.add_player(uid)
+                    # for i in range(w_list.size_game - 2):
+                    #     await w_list.add_player(i)
+
+                    await new_virtual_game(random.randint(3, 8), uid)
+                    # await new_virtual_game(4)
+
+
+
+                else:
+                    min_slots = 100
+                    target_list = None
+                    for w_list in waiting_lists:
+                        if w_list.pause or w_list.private:
+                            continue
+                        slots = w_list.size_game - len(w_list.players_id)
+                        if slots == 1:
+                            await w_list.add_player(uid)
+                            return
+                        else:
+                            if slots < min_slots:
+                                min_slots = slots
+                                target_list = w_list
+                    if target_list is not None:
+                        await target_list.add_player(uid)
+                    else:
+                        await message.answer(lex['no_games'])
+
+            elif text in buttons_rules_text:
+                mes = lex["general_rules"]
+                adv = ''
+                role = None
+                if text == lex['button_rules_common']:
+                    adv = lex['rules_common']
+                    role = Role.common
+                elif text == lex['button_rules_ghost']:
+                    mes = ''
+                    adv = lex['rules_ghost']
+                    role = Role.observer
+                elif text == lex['button_rules_killer']:
+                    adv = lex['rules_killer']
+                    role = Role.killer
+                elif text == lex['button_rules_doctor']:
+                    adv = lex['rules_doctor']
+                    role = Role.doctor
+                elif text == lex['button_rules_sheriff']:
+                    adv = lex['rules_sheriff']
+                    role = Role.sheriff
+                elif text == lex['button_rules_beauty']:
+                    adv = lex['rules_beauty']
+                    role = Role.beauty
+                elif text == lex['button_rules_godfather']:
+                    adv = lex['rules_godfather']
+                    role = Role.godfather
+                elif text == lex['button_rules_medium']:
+                    adv = lex['rules_medium']
+                    role = Role.medium
+                elif text == lex['button_rules_immortal']:
+                    adv = lex['rules_common'] + ' ' + lex['rules_immortal']
+                    role = Role.immortal
+                elif text == lex['button_rules_barman']:
+                    adv = lex['rules_barman']
+                    role = Role.barman
+                elif text == lex['button_rules_don']:
+                    adv = lex['rules_don']
+                    role = Role.don
+                elif text == lex['button_rules_bodyguard']:
+                    adv = lex['rules_bodyguard']
+                    role = Role.bodyguard
+                elif text == lex['button_rules_snitch']:
+                    adv = lex['rules_snitch']
+                    role = Role.snitch
+                await message.answer(
+                    f'{str(role)[0].upper()}{str(role)[1:]}\n\n{lex["team"]} {str(role.get_team())}.\n\n{mes}{adv}')
+
+        case Us.waiting_code.value:
+            if text == lex['button_cancel']:
+                Bot_db.set_stage(uid, Us.default.value)
+                await message.answer(lex['main_menu'], reply_markup=keyboard_main())
+
+            elif text.isdigit():
+                private_game_tuple = tuple(filter(lambda game: game.id == int(text) and game.private, waiting_lists))
+                if len(private_game_tuple) > 0:
+                    private_game = private_game_tuple[0]
+                    await private_game.add_player(uid)
+                else:
+                    await message.answer(lex['req_correct_code'])
             else:
                 await message.answer(lex['req_correct_code'])
-        else:
-            await message.answer(lex['req_correct_code'])
 
-    elif stage == 4:
-        game_id = Bot_db.get_game(uid)
-        for w_list in waiting_lists:
-            if w_list.id == game_id:
-                if text == lex['button_edit'] and w_list.manager == uid:
-                    w_list.pause = True
-                    w_list.serialize(w_list, uid)
-                    await message.answer(m_game_setting(w_list), reply_markup=kb_game_setting(w_list))
-                elif text == lex['button_cancel']:
-                    await w_list.remove_player(uid)
-                elif text == lex['button_ready']:
-                    w_list.players_id[uid] = True
-                    await w_list.preparedness(uid)
-                    await message.answer('Вы подтвердили своё участие', reply_markup=ReplyKeyboardRemove())
-                else:
-                    await w_list.send_all(f'{Bot_db.get_username(uid)} говорит:\n{text.strip()}',
-                                          predicate=lambda player: player != uid)
-    elif stage == 2:
-        await player_chat(message, func=FuncEnum.text, text=f'{Bot_db.get_username(uid)} говорит:\n{text.strip()}')
+        case Us.lobby.value:
+            game_id = Bot_db.get_game(uid)
+            if game_id == -1:
+                return
+
+            for w_list in waiting_lists:
+                if w_list.id == game_id:
+                    if text == lex['button_edit'] and w_list.manager == uid:
+                        w_list.pause = True
+                        w_list.serialize(w_list, uid)
+                        await message.answer(m_game_setting(w_list), reply_markup=kb_game_setting(w_list))
+
+                    elif text == lex['button_cancel']:
+                        await w_list.remove_player(uid)
+
+                    elif text == lex['button_ready']:
+                        w_list.players_id[uid] = True
+                        await w_list.preparedness(uid)
+                        await message.answer('Вы подтвердили своё участие', reply_markup=ReplyKeyboardRemove())
+
+                    else:
+                        await w_list.send_all(f'{Bot_db.get_username(uid)} говорит:\n{text.strip()}',
+                                              predicate=lambda player: player != uid)
+        case Us.ingame.value:
+            await player_chat(message, func=FuncEnum.text, text=f'{Bot_db.get_username(uid)} говорит:\n{text.strip()}')
 
 
 async def new_virtual_game(num: int, man: int):
@@ -332,34 +339,45 @@ async def player_chat(message: Message,
 
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+        return
+
     game = Game.get_game(Bot_db.get_game(uid))
+
     if game is not None:
         player = game.get_player(uid)
+
         if player.role is Role.observer and message.text == lex['button_leave_game']:
             game.players.pop(game.players.index(player))
-            Bot_db.set_stage(player.id, 1)
+            Bot_db.set_stage(player.id, Us.default.value)
             Bot_db.set_game(player.id, -1)
             await message.answer(lex['player_leave'], reply_markup=keyboard_main())
+
         elif game.phase is GamePhase.day_discuss:
             if player.role is Role.observer:
                 await message.answer(lex['ghost_message'])
+
             elif player.mute:
                 await message.answer(lex['this_mute'])
+
             else:
                 if player.drunk:
+                    # Если игрок отправляет текстовое сообщение (отправлять голосовые и видео он не может)
                     if text not in (f'{uname} говорит.', f'{uname} отправил(а):', None):
                         index = len(uname) + 11
                         text = text[:index] + drunk_message(text[index:])
                         await game.send_to_all_players_without(uid, func=FuncEnum.text, text=text)
                 else:
                     await game.send_to_all_players_without(uid, func=func, text=text, sticker=sticker, voice=voice)
+
         elif game.phase in (GamePhase.night, GamePhase.evening):
             if player.role.get_team() is Team.mafia:
                 predicate = lambda player: player.id != uid and player.role.get_team() is Team.mafia
                 await game.send_to_all_players(func=func, predicate=predicate, text=text, sticker=sticker, voice=voice)
+
             elif player.role is Role.observer and player.medium_who_contact is not None and text is not None:
                 if text not in (f'{uname} говорит.', f'{uname} отправил(а):'):
                     await send_message(player.medium_who_contact.id, func=FuncEnum.text, text=text)
+
             elif player.role is Role.medium and player.target is not None:
                 await send_message(player.target.id, func=func, text=text, sticker=sticker, voice=voice)
 
@@ -369,6 +387,7 @@ async def process_button_press(callback: CallbackQuery):
     uid = callback.from_user.id
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
+
     stage = Bot_db.get_user_stage(uid)
     game = Game.get_game(Bot_db.get_game(uid))
     data = callback.data
@@ -376,35 +395,33 @@ async def process_button_press(callback: CallbackQuery):
     # print(data)
     await callback.answer()
 
-    def get_game(id: int, games: list):
-        correct_games = tuple(filter(lambda fgame: fgame.id == id, games))
-        if len(correct_games) > 0:
-            return correct_games[0]
+    def get_game(game_id: int, g_games: list):
+        all_correct_games = tuple(filter(lambda fgame: fgame.id == game_id, g_games))
+        if len(all_correct_games) > 0:
+            return all_correct_games[0]
 
-    def get_role(id: int):
-        return Role(id)
-        # correct_role = tuple(filter(lambda x: x.value == id, Role.__members__.values()))
-        # if len(correct_role) > 0:
-        #     return correct_role[0]
+    def get_role(enum_id: int):
+        return Role(enum_id)
 
-    async def game_list(index, l_games, m_list, kb):
+    async def game_list(index: int, l_games: list, m_list: Callable, kb: Callable):
         if len(l_games) > index * 8:
             await callback.message.edit_text(text=m_list(index, l_games), reply_markup=kb(l_games, index))
         else:
             await callback.message.edit_text(text=m_list(index - 1, l_games), reply_markup=kb(l_games, index - 1))
 
-    async def callback_update(game):
-        await callback.message.edit_text(m_game_setting(game), reply_markup=kb_game_setting(game))
+    async def callback_update(c_game):
+        await callback.message.edit_text(m_game_setting(c_game), reply_markup=kb_game_setting(c_game))
 
     async def handler_voting(game: Game, player: Player, text: str):
-        await callback.message.answer(text)
+        asyncio.create_task(callback.message.answer(text))
         player.voted = True
-        count_must_vote = len(tuple(
-            filter(lambda player: player.role is not Role.observer and not player.mute and not player.virtual,
-                   game.players)))
+        count_must_votes: int = len(tuple(filter(
+            lambda player: player.role is not Role.observer and not player.mute and not player.virtual, game.players)))
+
         game.voting_count += 1
-        print(game.voting_count, count_must_vote)
-        if game.voting_count >= count_must_vote:
+        print(game.voting_count, count_must_votes)
+
+        if game.voting_count >= count_must_votes:
             await game.exclusion()
 
     async def close_editor(game):
@@ -427,12 +444,10 @@ async def process_button_press(callback: CallbackQuery):
         for player_id in players:
             await game.add_player(int(player_id), players[player_id], False)
 
+        # for i in range(game.size_game - 3):
+        #     await game.add_player(i)
 
-
-        for i in range(game.size_game - 3):
-            await game.add_player(i)
-
-    if stage in (1, 4):
+    if stage in (Us.default.value, Us.lobby.value):
         keys = tuple(Cdata.__members__.values())
         tuple_matches = tuple(values in data for values in [key.value for key in keys])
         if any(tuple_matches):
@@ -453,7 +468,7 @@ async def process_button_press(callback: CallbackQuery):
                         game = get_game(id, games)
                         if game is not None:
                             game.players.append(Player(uid, Role.observer))
-                            Bot_db.set_stage(uid, 2)
+                            Bot_db.set_stage(uid, Us.ingame.value)
                             Bot_db.set_game(uid, id)
                             await callback.message.answer(text=lex['observer_add'], reply_markup=keyboard_observer())
                         else:
@@ -479,7 +494,8 @@ async def process_button_press(callback: CallbackQuery):
                             case Cdata.apg:
                                 tempObj.size_game += 1
                             case Cdata.ceg:
-                                correct_games = tuple(filter(lambda wlist: wlist.manager == uid and wlist.pause, waiting_lists))
+                                correct_games = tuple(
+                                    filter(lambda wlist: wlist.manager == uid and wlist.pause, waiting_lists))
                                 if len(correct_games) != 0:
                                     waiting_lists.remove(correct_games[0])
                                 await close_editor(tempObj)
@@ -508,7 +524,7 @@ async def process_button_press(callback: CallbackQuery):
                     else:
                         await callback.answer(lex['bug'])
 
-    elif game is not None and stage == 2:
+    elif game is not None and stage == Us.ingame.value:
         player = game.get_player(uid)
         target = None
         t_name = None
@@ -599,7 +615,7 @@ async def process_button_press(callback: CallbackQuery):
                     await callback.message.delete()
 
                     night_role: tuple[Role, ...] = (
-                    Role.doctor, Role.sheriff, Role.killer, Role.godfather, Role.bodyguard, Role.don)
+                        Role.doctor, Role.sheriff, Role.killer, Role.godfather, Role.bodyguard, Role.don)
 
                     count_must_vote = len(
                         tuple(filter(lambda player: player.role in night_role and not player.virtual, game.players)))
@@ -642,9 +658,9 @@ def print_games():
 
 if __name__ == '__main__':
     for user in Bot_db.get_users():
-        uid = user[1]
-        Bot_db.set_game(uid, -1)
-        Bot_db.set_stage(uid, 1)
+        u_id = user[1]
+        Bot_db.set_game(u_id, -1)
+        Bot_db.set_stage(u_id, Us.default.value)
     # Bot_db.set_wins(2130716911, 16)
     # Bot_db.set_wins(802878496, 12)
     dp.middleware.setup(ThrottlingMiddleware(1))
