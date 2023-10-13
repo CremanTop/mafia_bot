@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from typing import Self, Optional
 
 
 class Team(Enum):
@@ -6,7 +7,7 @@ class Team(Enum):
     mafia = auto()
     ghost = auto()
 
-    def __str__(self):
+    def __str__(self) -> str:
         match self:
             case Team.citizen:
                 return 'горожане 🟢'
@@ -33,7 +34,7 @@ class Role(Enum):
     bodyguard = auto()
     snitch = auto()
 
-    def __str__(self):
+    def __str__(self) -> str:
         match self:
             case Role.common:
                 return 'мирный житель 👔'
@@ -64,7 +65,7 @@ class Role(Enum):
             case _:
                 return '[ошибка]'
 
-    def get_team(self):
+    def get_team(self) -> Optional[Self]:
         match self:
             case Role.common | Role.doctor | Role.sheriff | Role.beauty | Role.immortal | Role.medium | Role.bodyguard:
                 return Team.citizen

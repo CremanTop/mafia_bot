@@ -1,7 +1,12 @@
 import random
+from typing import Final, Optional, Union
 
-from Role import Role, Team
-from main import Bot_db
+from modules_import import *
+
+config: Final[Config] = Config.get()
+Bot_db = config.Bot_db
+
+PlayerS = list[Player]
 
 lex: dict[str, str] = {
     'help_nick': 'Сейчас тебе нужно придумать и написать мне свой никнейм.',
@@ -135,14 +140,14 @@ lex: dict[str, str] = {
 }
 
 
-def m_setup_nick(nick: str):
+def m_setup_nick(nick: str) -> str:
     return f'Прекрасно, {nick}, теперь мы можем приступить к игре. Если ты не знаешь правила, то сейчас я всё ' \
            f'объясню.\n\n{lex["command_rules"]}\n\nНажми на кнопку "Найти игру", когда захочешь поиграть. '
 
 
-def m_start_game(players: list):
-    roles = []
-    player_names = []
+def m_start_game(players: PlayerS) -> str:
+    roles: list[str] = []
+    player_names: list[str] = []
     for player in players:
         player_names.append(Bot_db.get_username(player.id))
         roles.append(str(player.role))
@@ -150,8 +155,8 @@ def m_start_game(players: list):
     return f'Игра началась! Добро пожаловать {", ".join(player_names)}. \n\nВ последнее время в маленьком городе неспокойно. Страшные вещи происходят по ночам.\n\nРоли: {", ".join(roles)}.'
 
 
-def m_player_role(player):
-    task = ''
+def m_player_role(player: Player) -> str:
+    task: str = ''
     match player.role:
         case Role.killer:
             task = 'убивать мирных жителей по ночам и не вызывать подозрений днём.'
@@ -180,8 +185,8 @@ def m_player_role(player):
     return f'Вы - {str(player.role)}. Ваша задача {task}'
 
 
-def m_team_killers(this, players):
-    team = []
+def m_team_killers(this: Player, players: PlayerS) -> str:
+    team: list[str] = []
     for player in players:
         if player.role.get_team() is Team.mafia and player != this:
             team.append(Bot_db.get_username(player.id))
@@ -194,12 +199,13 @@ def m_team_killers(this, players):
     return f'Ваш{text} союзник{text}: {", ".join(team)}. С ним{text} вы будете планировать убийства.'
 
 
-def m_result_night(players: list):
-    victims = []
-    cancelled = []
-    mute = []
-    alives = []
-    mes = []
+# Плохая реализация, в файле lex не должно быть логики, только сообщения
+def m_result_night(players: PlayerS) -> str:
+    victims: PlayerS = []
+    cancelled: PlayerS = []
+    mute: PlayerS = []
+    alives: Union[PlayerS, list[str]] = []
+    mes: Union[list[str], str] = []
     for player in players:
         if player.choosen_beauty > 0:
             cancelled.append(player)
@@ -208,10 +214,10 @@ def m_result_night(players: list):
         if player.choosen_godfather > 0:
             mute.append(player)
 
-    final_victim = None
+    final_victim: Optional[Player] = None
     if len(victims) > 0:
-        max_point = 0
-        prior_victim = []
+        max_point: int = 0
+        prior_victim: PlayerS = []
         for vict in victims:
             if vict.choosen_kill > max_point:
                 max_point = vict.choosen_kill
@@ -224,7 +230,7 @@ def m_result_night(players: list):
                 final_victim.choosen_kill += vict.choosen_kill
                 vict.choosen_kill = 0
 
-    mes_start = ''
+    mes_start: str = ''
     if final_victim is not None:
         final_victim.choosen_kill -= final_victim.choosen_doctor
         if final_victim.choosen_kill == 0:
@@ -268,7 +274,7 @@ def m_result_night(players: list):
            f'\n\nЖители собираются, чтобы обсудить главные вопросы на повестке дня.\n\nВ игре остались: {", ".join(alives)}.'
 
 
-def m_result_voting(target: list):
+def m_result_voting(target: PlayerS) -> str:
     if len(target) == 1:
         return f'{Bot_db.get_username(target[0].id)} изгнан(а) по результатам голосования. Он(а) был(а) {str(target[0].role)}.'
     elif len(target) == 0:
@@ -277,8 +283,8 @@ def m_result_voting(target: list):
         return 'Голоса разделились и никто не был изгнан.'
 
 
-def m_leaders(leaders: dict):
-    i = 1
+def m_leaders(leaders: dict) -> str:
+    i: int = 1
     board = 'Доска лидеров:\n'
     for player in leaders:
         if i > 10:

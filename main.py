@@ -1,32 +1,25 @@
 # import keep_alive
 import random
+from typing import Final
 
-from aiogram import Bot, executor
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram import executor
 from aiogram.dispatcher.filters import Command
-from aiogram.types import Message, ContentType, CallbackQuery
-from environs import Env
+from aiogram.types import Message, ContentType, CallbackQuery, ReplyKeyboardRemove
 from magic_filter import F
 
-from middlewares import *
-from db import BotDB
-from Game import *
+from modules_import import *
+from Game import games, waiting_lists, WaitingList, Game, GamePhase
+from libs.api import media_collector, media_generate, FuncEnum, send_message
+from keyboard import keyboard_main, keyboard_rules, kb_active_games, kb_wait_games, keyboard_cancel, kb_game_setting, \
+    Cdata, keyboard_observer
+from lex import lex, m_leaders, m_setup_nick, m_list_game, m_list_wait, m_game_setting
+from middlewares import ThrottlingMiddleware, rate_limit
 
-#
-# BOT_TOKEN = os.environ['BOT_TOKEN']  # Сохраняем значение переменной окружения в переменную bot_token
-# password = os.environ['DEFAULT_PASSWORD']
+config: Final[Config] = Config.get()
 
-env = Env()  # Создаем экземплят класса Env
-env.read_env()  # Методом read_env() читаем файл .env и загружаем из него переменные в окружение
-
-BOT_TOKEN = env('BOT_TOKEN')  # Сохраняем значение переменной окружения в переменную bot_token
-password = env('DEFAULT_PASSWORD')
-
-# Создаем объекты бота и диспетчера
-bot: Bot = Bot(BOT_TOKEN)
-storage: MemoryStorage = MemoryStorage()
-dp: Dispatcher = Dispatcher(bot, storage=storage)
-Bot_db = BotDB('database')
+bot = config.bot
+dp = config.dp
+Bot_db = config.Bot_db
 
 
 @dp.message_handler(Command(commands=['start']))

@@ -1,12 +1,17 @@
+import asyncio
 import json
 from enum import Enum
+from typing import Final, Callable, Optional
 
 from aiogram.types import MediaGroup, Message
 from aiogram.types.base import TelegramObject
 from aiogram.utils.exceptions import WrongFileIdentifier, BotBlocked, BadRequest
 
-from db import BotDB
-from main import bot
+from Config import Config
+from libs.db import BotDB
+
+config: Final[Config] = Config.get()
+bot = config.bot
 
 
 class FuncEnum(Enum):
@@ -25,12 +30,13 @@ class Predicates:
 
 
 async def send_message(chat_id: int,
-                       func,
-                       text: str = None,
-                       keyboard: TelegramObject = None,
-                       media: MediaGroup = None,
-                       sticker: str = None,
-                       voice: str = None) -> None:
+                       func: Callable | FuncEnum,
+                       text: Optional[str] = None,
+                       keyboard: Optional[TelegramObject] = None,
+                       media: Optional[MediaGroup] = None,
+                       sticker: Optional[str] = None,
+                       voice: Optional[str] = None
+                       ) -> None:
     """Отправляет сообщение указанному пользователю по id"""
     try:
         if voice is not None:
@@ -48,7 +54,7 @@ async def send_message(chat_id: int,
     except WrongFileIdentifier:
         print('Неправильный идентификатор файла!')
     except BadRequest:
-        #print('Неправильный запрос!')
+        # print('Неправильный запрос!')
         pass
     except BotBlocked:
         print('Бот заблокирован у ' + str(chat_id))
@@ -57,18 +63,20 @@ async def send_message(chat_id: int,
 
 
 async def mailing(bot_db: BotDB,
-                  func,
-                  pred=lambda x: True,
-                  text: str = None,
-                  keyboard: TelegramObject = None,
-                  media: MediaGroup = None,
-                  sticker: str = None,
-                  voice: str = None) -> None:
+                  func: Callable,
+                  pred: Callable[[tuple], bool] = lambda x: True,
+                  text: Optional[str] = None,
+                  keyboard: Optional[TelegramObject] = None,
+                  media: Optional[MediaGroup] = None,
+                  sticker: Optional[str] = None,
+                  voice: Optional[str] = None
+                  ) -> None:
     """Отправляет сообщение всем пользователям в базе данных"""
     for user in bot_db.get_users():
         chat_id = user[1]
         if pred(user):
-            await send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice)
+            asyncio.create_task(
+                send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice))
 
 
 class MGroup:
@@ -90,7 +98,7 @@ class MGroup:
             groups[mid] = media_def.copy()
             JFile.write_file(path, name, data)
 
-    def _update(self, func_up, m_type: str, value: str):
+    def _update(self, func_up: Callable, m_type: str, value: str):
         data: dict = JFile.read_file(self.path, self.name)
         media_group = data['media'][self.id]
         media_group = func_up(media_group, m_type, value)
@@ -180,7 +188,7 @@ def media_generate(group: MGroup) -> MediaGroup:
     return final_mediaGroup
 
 
-path: str = 'files'
+path: str = '../files'
 name: str = 'mediaGroups'
 
 
