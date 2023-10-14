@@ -30,6 +30,11 @@ class Cdata(Enum):
     ar = 'add_role'
     g = '_game'
 
+    @property
+    def value(self) -> str:
+        """The value of the Enum member."""
+        return self._value_
+
 
 def keyboard_rules() -> ReplyKeyboardMarkup:
     buttons_text: SetButton = (('button_main_menu',),

@@ -22,6 +22,8 @@ class Config:
         self.dp: Final[Dispatcher] = Dispatcher(self.bot, storage=self.storage)
         self.Bot_db: Final[BotDB] = BotDB('database')
 
+        self.TEST_MODE: bool = True
+
     @staticmethod
     def get() -> Self:
         if Config.__instance is None:

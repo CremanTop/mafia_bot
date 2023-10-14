@@ -72,11 +72,12 @@ async def mailing(bot_db: BotDB,
                   voice: Optional[str] = None
                   ) -> None:
     """Отправляет сообщение всем пользователям в базе данных"""
-    for user in bot_db.get_users():
-        chat_id = user[1]
-        if pred(user):
-            asyncio.create_task(
-                send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice))
+    async with asyncio.TaskGroup() as tg:
+        for user in bot_db.get_users():
+            chat_id = user[1]
+            if pred(user):
+                tg.create_task(
+                    send_message(chat_id, func, text=text, keyboard=keyboard, media=media, sticker=sticker, voice=voice))
 
 
 class MGroup:

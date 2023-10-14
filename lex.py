@@ -96,6 +96,9 @@ lex: dict[str, str] = {
                     'будет отображаться, что он находится в команде мафии, даже если на самом деле это не так.',
     'team': 'Команда:',
     'waiting': 'Ищем для вас соперников. Как только наберётся достаточно игроков, мы начнём.',
+    'you_ghost': 'В лобби достаточно игроков. Вы можете остаться и наблюдать за игрой как призрак или выйти (если '
+                 'кто-то из других игроков выйдет, вы сможете занять его место).',
+    'you_not_ghost': 'Для вас освобдилось место! Теперь вы можете участвовать в игре.',
     'evening_common': '🌄 Наступает вечер. На улицу выходят разные сомнительные личности.',
     'evening_beauty': '🌄 Наступает вечер. Пришло время выбрать, чьё действие этой ночью будет отменено.',
     'evening_medium': '🌄 Наступает вечер. Пришло время выбрать, с каким призраком связаться.',
@@ -138,7 +141,9 @@ lex: dict[str, str] = {
     'skip': 'Пропуск',
     'skip_m': 'Вы пропустили голосование.',
     'no_find_role': 'Вы не можете узнать роль',
-    'eq_old_tg': 'Вы не можете выбирать одного и того же игрока несколько раз подряд!'
+    'eq_old_tg': 'Вы не можете выбирать одного и того же игрока несколько раз подряд!',
+    'start_editing': 'Лобби на паузе, модератор вносит изменения в настройки игры.',
+    'config_edit': 'Настройки игры изменены модератором.\nНовые настройки:\n\n'
 }
 
 
@@ -287,7 +292,7 @@ def m_result_voting(target: PlayerS) -> str:
 
 def m_leaders(leaders: dict) -> str:
     i: int = 1
-    board = 'Доска лидеров:\n'
+    board: str = 'Доска лидеров:\n'
     for player in leaders:
         if i > 10:
             break
@@ -296,10 +301,10 @@ def m_leaders(leaders: dict) -> str:
     return board
 
 
-def m_list_game(index, games):
-    mes = ''
-    i = 1
-    size = 8
+def m_list_game(index, games) -> str:
+    mes: str = ''
+    i: int = 1
+    size: int = 8
     for game in games:
         if not game.private:
             if index * size < i <= (index + 1) * size:
@@ -312,26 +317,26 @@ def m_list_game(index, games):
     return mes
 
 
-def m_list_wait(index, lists):
-    mes = ''
-    i = 1
-    size = 8
-    for list in lists:
-        if not list.private and not list.pause:
+def m_list_wait(index: int, lists: list) -> str:
+    mes: str = ''
+    i: int = 1
+    size: int = 8
+    for w_list in lists:
+        if not w_list.private:
             if index * size < i <= (index + 1) * size:
-                players = [Bot_db.get_username(p) for p in list.players_id]
-                roles = [str(role) for role in list.game_roles]
+                players = [Bot_db.get_username(p) for p in w_list.players_id]
+                roles = [str(role) for role in w_list.game_roles]
                 random.shuffle(players)
-                mes += f'{i}) Игра ({len(players)}/{str(list.size_game)}). Игроки: {", ".join(players)}. Роли: {", ".join(roles)}.\n'
+                mes += f'{i}) Игра ({len(players)}/{str(w_list.size_game)}). Игроки: {", ".join(players)}. Роли: {", ".join(roles)}.\n'
             i += 1
     mes += '\nИспользуйте кнопки ниже, чтобы подключиться к игре.'
     return mes
 
 
-def m_game_setting(wait_list):
-    roles = wait_list.game_roles
-    size = wait_list.size_game
-    private = 'приватная' if wait_list.private else 'публичная'
+def m_game_setting(wait_list) -> str:
+    roles: list = wait_list.game_roles
+    size: int = wait_list.size_game
+    private: str = 'приватная' if wait_list.private else 'публичная'
 
     dict_roles = {}
     [dict_roles.update({role: roles.count(role)}) for role in roles]
@@ -345,6 +350,14 @@ def m_game_setting(wait_list):
         mes += f'-{value}- ' + key[0].upper() + key[1:] + '\n'
 
     return mes
+
+
+def m_players_in_lobby(wait_list) -> str:
+    mes: str = f'В лобби сейчас находятся ({len(wait_list.players_id)}/{wait_list.size_game}):\n'
+    players_name: list[str] = []
+    for player_id in wait_list.players_id:
+        players_name.append(Bot_db.get_username(player_id))
+    return mes + '\n'.join(players_name)
 
 
 def m_time_alert(time_alert: int, phase: int) -> str:

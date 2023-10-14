@@ -1,6 +1,4 @@
 import asyncio
-import copy
-import json
 from enum import Enum, auto
 from random import random
 from typing import Final, Self, Callable
@@ -13,7 +11,8 @@ from modules_import import *
 from libs.api import FuncEnum, send_message
 from keyboard import kb_without_player, kb_role, kb_without_team, kb_all_players, keyboard_observer, keyboard_main, \
     keyboard_manager, keyboard_lobby, keyboard_cancel
-from lex import m_start_game, m_team_killers, m_player_role, lex, m_time_alert, m_result_night, m_result_voting
+from lex import m_start_game, m_team_killers, m_player_role, lex, m_time_alert, m_result_night, m_result_voting, \
+    m_players_in_lobby
 
 config: Final[Config] = Config.get()
 Bot_db = config.Bot_db
@@ -34,11 +33,11 @@ class Game:
         self.phase: GamePhase = GamePhase.day_exclusion
         self.skip_count: int = 0
         self.voting_count: int = 0
-        self.time_evening: int = 20  # 20
-        self.time_night: int = 30  # 30
-        self.time_speak: int = 15  # 90
-        self.time_voting: int = 20  # 20
-        self.time_alert: int = 5  # 5 должно быть меньше всех остальных
+        self.time_evening: Final[int] = 20  # 20
+        self.time_night: Final[int] = 30  # 30
+        self.time_speak: Final[int] = 15  # 90
+        self.time_voting: Final[int] = 20  # 20
+        self.time_alert: Final[int] = 5  # 5 должно быть меньше всех остальных
 
     def get_player(self, user_id: int) -> Player:
         for player in self.players:
@@ -57,11 +56,16 @@ class Game:
         self.assign_roles(self.players_id, self.roles.copy())
         await self.send_to_all_players(FuncEnum.keyboard, text=m_start_game(self.players),
                                        keyboard=ReplyKeyboardRemove())
-        for player in self.players:
-            Bot_db.set_stage(player.id, Us.ingame.value)
-            asyncio.create_task(send_message(player.id, FuncEnum.text, text=m_player_role(player)))
-            if player.role.get_team() is Team.mafia:
-                asyncio.create_task(send_message(player.id, FuncEnum.text, text=m_team_killers(player, self.players)))
+
+        async with asyncio.TaskGroup() as tg:
+            for player in self.players:
+                stage: int = Us.ingame.value if Bot_db.get_user_stage(player.id) == Us.lobby.value else Us.ingame_ghost.value
+                Bot_db.set_stage(player.id, stage)
+
+                tg.create_task(send_message(player.id, FuncEnum.text, text=m_player_role(player)))
+                if player.role.get_team() is Team.mafia:
+                    tg.create_task(send_message(player.id, FuncEnum.text, text=m_team_killers(player, self.players)))
+
         await asyncio.sleep(2)
         await self.evening()
 
@@ -73,18 +77,19 @@ class Game:
                 new_player = Player(chat_id, role)
             self.players.append(new_player)
 
+        active_players: list[int] = list(filter(lambda x: Bot_db.get_user_stage(x) != Us.lobby_ghost.value, players))
+        ghosts: tuple[int] = tuple(filter(lambda x: Bot_db.get_user_stage(x) == Us.lobby_ghost.value, players))
+
         for role in role_list:
-            selected = random.choice(players)
-            players.remove(selected)
+            selected = random.choice(active_players)
+            active_players.remove(selected)
             assign(selected, role)
 
-        for chat_id in players:
-            # if chat_id == 1662143212:
-            #     assign(chat_id, Role.barman)
-            # if chat_id == 2130716911:
-            #     assign(chat_id, Role.don)
-            # else:
+        for chat_id in active_players:
             assign(chat_id, Role.common)
+
+        for chat_id in ghosts:
+            assign(chat_id, Role.observer)
 
     async def send_to_all_players(self,
                                   func,
@@ -94,10 +99,11 @@ class Game:
                                   media: MediaGroup = None,
                                   sticker: str = None,
                                   voice: str = None) -> None:
-        for player in self.players:
-            if predicate(player) and not player.virtual:
-                asyncio.create_task(send_message(player.id, func, text=text, keyboard=keyboard, media=media,
-                                                 sticker=sticker, voice=voice))
+        async with asyncio.TaskGroup() as tg:
+            for player in self.players:
+                if predicate(player) and not player.virtual:
+                    tg.create_task(send_message(player.id, func, text=text, keyboard=keyboard, media=media,
+                                                sticker=sticker, voice=voice))
 
     async def send_to_all_players_without(self,
                                           user_id,
@@ -108,9 +114,8 @@ class Game:
                                           sticker: str = None,
                                           voice: str = None) -> None:
         predicate = lambda player: player.id != user_id
-        asyncio.create_task(
-            self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
-                                     voice=voice))
+        await self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
+                                       voice=voice)
 
     async def send_to_all_players_without_roles(self,
                                                 roles: tuple,
@@ -121,9 +126,8 @@ class Game:
                                                 sticker: str = None,
                                                 voice: str = None) -> None:
         predicate = lambda player: player.role not in roles
-        asyncio.create_task(
-            self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
-                                     voice=voice))
+        await self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
+                                       voice=voice)
 
     async def send_to_all_players_to_roles(self,
                                            roles: tuple,
@@ -134,9 +138,8 @@ class Game:
                                            sticker: str = None,
                                            voice: str = None) -> None:
         predicate = lambda player: player.role in roles
-        asyncio.create_task(
-            self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
-                                     voice=voice))
+        await self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
+                                       voice=voice)
 
     async def send_to_all_players_to_role_without(self,
                                                   roles: tuple,
@@ -148,12 +151,12 @@ class Game:
                                                   sticker: str = None,
                                                   voice: str = None) -> None:
         predicate = lambda player: player.role in roles and player.id != uid
-        asyncio.create_task(
-            self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
-                                     voice=voice))
+        await self.send_to_all_players(func, predicate, text=text, keyboard=keyboard, media=media, sticker=sticker,
+                                       voice=voice)
 
     async def evening(self):
-        print('Должен быть вечер')
+        if config.TEST_MODE:
+            print('Начинается вечер')
         if self.phase is GamePhase.day_exclusion:
 
             self.phase = GamePhase.evening
@@ -188,14 +191,15 @@ class Game:
             await asyncio.sleep(self.time_evening - self.time_alert)
             if self.phase is GamePhase.evening:
                 predicate: Callable[[Player], bool] = lambda player: player.role in (
-                Role.beauty, Role.medium, Role.barman, Role.snitch) and not player.choosed
+                    Role.beauty, Role.medium, Role.barman, Role.snitch) and not player.choosed
                 await self.send_to_all_players(func=FuncEnum.text, predicate=predicate,
                                                text=m_time_alert(self.time_alert, 0))
                 await asyncio.sleep(self.time_alert)
                 await self.night()
 
     async def night(self):
-        print('Должна быть ночь')
+        if config.TEST_MODE:
+            print('Начинается ночь')
         if self.phase is GamePhase.evening:
 
             self.voting_count = 0
@@ -245,28 +249,32 @@ class Game:
                 await self.setup_day()
 
     async def setup_day(self):
-        print('Должен быть день')
+        if config.TEST_MODE:
+            print('Начинается день')
         if self.phase is GamePhase.night:
 
-            print('Выборы ночи:')
-            for player in self.players:
-                print(
-                    f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)')
-            print()
+            if config.TEST_MODE:
+                print('Выборы ночи:')
+                for player in self.players:
+                    print(
+                        f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)',
+                        end='\n\n')
 
             self.phase = GamePhase.day_discuss
             self.revaluation_night()
             await self.send_to_all_players(FuncEnum.text, text=m_result_night(self.players))  # логика тут
 
-            print('Итоги ночи:')
-            for player in self.players:
-                print(
-                    f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)')
-            print()
+            if config.TEST_MODE:
+                print('Итоги ночи:')
+                for player in self.players:
+                    print(
+                        f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)',
+                        end='\n\n')
 
             for player in self.players:
                 if player.choosen_kill > 0:
                     player.role = Role.observer
+                    Bot_db.set_stage(player.id, Us.ingame_ghost.value)
                     asyncio.create_task(send_message(player.id, FuncEnum.keyboard, text=lex['kill_player'],
                                                      keyboard=keyboard_observer()))
                 elif player.choosen_godfather > 0:
@@ -328,9 +336,10 @@ class Game:
         predicate_mute = lambda player: player.mute and predicate_not_ghost(player)
 
         asyncio.create_task(self.send_to_all_players(FuncEnum.keyboard, predicate_not_mute, text=lex['start_voting'],
-                                       keyboard=kb_all_players(self.players, skipped=True)))
+                                                     keyboard=kb_all_players(self.players, skipped=True)))
         asyncio.create_task(self.send_to_all_players(FuncEnum.text, predicate_mute, text=lex['start_voting']))
-        asyncio.create_task(self.send_to_all_players_to_roles((Role.observer,), FuncEnum.text, text=lex['start_voting']))
+        asyncio.create_task(
+            self.send_to_all_players_to_roles((Role.observer,), FuncEnum.text, text=lex['start_voting']))
 
         await asyncio.sleep(self.time_voting - self.time_alert)
         if self.phase is GamePhase.day_voting:
@@ -341,18 +350,19 @@ class Game:
             await self.exclusion()
 
     async def exclusion(self):
-        print('Должно быть изгнание')
+        if config.TEST_MODE:
+            print('Начинается изгнание')
         if self.phase is GamePhase.day_voting:
 
             self.phase = GamePhase.day_exclusion
             max_voices = self.skip_count
             target = []
 
-            print('Итоги голосования:')
-            for player in self.players:
-                print(f'{Bot_db.get_username(player.id)} - {player.voices}')
-            print(f'skip - {self.skip_count}')
-            print()
+            if config.TEST_MODE:
+                print('Итоги голосования:')
+                for player in self.players:
+                    print(f'{Bot_db.get_username(player.id)} - {player.voices}')
+                print(f'skip - {self.skip_count}', end='\n\n')
 
             self.skip_count = 0
             for player in self.players:
@@ -365,6 +375,7 @@ class Game:
             await self.send_to_all_players(FuncEnum.text, text=m_result_voting(target))
             if len(target) == 1:
                 target[0].role = Role.observer
+                Bot_db.set_stage(target[0].id, Us.ingame_ghost.value)
                 await send_message(target[0].id, FuncEnum.keyboard, text=lex['kill_player'],
                                    keyboard=keyboard_observer())
             await asyncio.sleep(2)
@@ -398,17 +409,19 @@ class Game:
         for player in self.players:
             if player.virtual:
                 continue
-            Bot_db.set_stage(player.id, Us.lobby.value)
-            if (player.role.get_team() is Team.citizen and city_win) or (
-                    player.role.get_team() is Team.mafia and not city_win):
+
+            if (player.role.get_team() is Team.citizen and city_win) or (player.role.get_team() is Team.mafia and not city_win):
                 Bot_db.set_wins(player.id, Bot_db.get_wins(player.id) + 1)
                 roles += f'{Bot_db.get_username(player.id)} - {str(player.role)}\n'
+
         await self.send_to_all_players(FuncEnum.text, text=text + roles)
-        games.pop(games.index(self))
+        games.remove(self)
         w_list = WaitingList(self.size, self.manager, self.private, self.roles)
         waiting_lists.append(w_list)
         for player in self.players:
-            await w_list.add_player(player.id, False, False)
+            stage: int = Us.lobby.value if Bot_db.get_user_stage(player.id) == Us.ingame.value or player.id == self.manager else Us.lobby_ghost.value
+            Bot_db.set_stage(player.id, stage)
+            await w_list.add_player(player.id, False, False, False)
 
 
 class GamePhase(Enum):
@@ -434,62 +447,91 @@ class WaitingList:
         self.pause: bool = pause
         WaitingList.counter += 1
 
-    def is_full(self):  # хватает ли людей
+        asyncio.create_task(self.add_player(self.manager, True, False))
+
+    def is_full(self) -> bool:  # хватает ли людей
         return len(self.players_id) >= self.size_game
 
-    def is_ready(self):  # все ли готовы
-        return all(self.players_id.values())
+    def is_ready(self) -> bool:  # все ли готовы
+        tuple_not_ghost = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id))
+        ready: list[bool] = [self.players_id[x] for x in tuple_not_ghost]
+        return all(ready)
 
-    async def add_player(self, player_id: int, confirm: bool = True, message: bool = True):
-        if len(self.players_id) < self.size_game:
-            Bot_db.set_stage(player_id, Us.lobby.value)
-            Bot_db.set_game(player_id, self.id)
-            if tuple(self.players_id.keys()).count(player_id) == 0:
-                self.players_id[player_id] = confirm
-                if message:
-                    await self.send_all(
-                        f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} подключился.')
+    async def add_player(self, player_id: int, confirm: bool = True, message: bool = True, redistribute_stages: bool = True):
+        if redistribute_stages:
+            if not self.is_full():
+                Bot_db.set_stage(player_id, Us.lobby.value)
+            else:
+                Bot_db.set_stage(player_id, Us.lobby_ghost.value)
+
+        Bot_db.set_game(player_id, self.id)
+        if tuple(self.players_id.keys()).count(player_id) == 0:
+            self.players_id[player_id] = confirm
+            if message:
+                await self.send_all(
+                    f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} подключился.',
+                    lambda x: x != player_id)
+
+            k_board = keyboard_cancel() if player_id != self.manager else keyboard_manager()
+            await send_message(player_id, FuncEnum.text, m_players_in_lobby(self), keyboard=k_board)
+
+            if not self.pause:
                 await self.preparedness(player_id, True)
-        else:
-            Bot_db.set_stage(player_id, Us.default.value)
-            Bot_db.set_game(player_id, -1)
-            pass
-            # НУ ТУТ СООБЩЕНИЕ КАКОЕ-ТО КИКНУТЫМ (может лучше их сделать призраками)
 
     async def remove_player(self, player_id: int):
         Bot_db.set_stage(player_id, Us.default.value)
         Bot_db.set_game(player_id, -1)
         self.players_id.pop(player_id)
         await send_message(player_id, FuncEnum.keyboard, text='Вы отключились от игры.', keyboard=keyboard_main())
-        # if len(tuple(filter(lambda id: id > 100, self.players_id))) == 0 and self in waiting_lists:
-        #     waiting_lists.remove(self)
-        #     return
-        if self.pause:
-            temp_obj = WaitingList.deserialize(self.manager)
-            temp_obj.remove_player(player_id)
-            WaitingList.serialize(temp_obj, self.manager)
-        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Тестить
+
+        if not config.TEST_MODE:
+            if len(tuple(filter(lambda id: id > 100, self.players_id))) == 0 and self in waiting_lists:
+                waiting_lists.remove(self)
+                return
 
         await self.send_all(
             f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} отключился или был исключён.')
         if self.manager == player_id and len(self.players_id) > 0:
             self.manager = list(self.players_id.keys())[0]
             await send_message(self.manager, FuncEnum.keyboard,
-                               text='Теперь вы являетесь менеджером этой игры и можете менять настройки.',
+                               text='Теперь вы являетесь модератором этой игры и можете менять настройки.',
                                keyboard=keyboard_manager())
-        self.wait_for_confirm = False
+        if self.wait_for_confirm and not self.is_full():
+            self.wait_for_confirm = False
 
     async def kick_unready(self):
         await asyncio.sleep(25)
-        if self.wait_for_confirm:
-            players = tuple(self.players_id.keys())
-            for player in players:
-                if player in players:
-                    if not self.players_id[player]:
-                        await self.remove_player(player)
+        if not self.wait_for_confirm:
+            return
 
-    async def preparedness(self, player_id, show_mes: bool = False):
+        kick_count: int = 0
+        players = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id.keys()))
+        for player in players:
+            if player in players:
+                if not self.players_id[player]:
+                    asyncio.create_task(self.remove_player(player))
+                    kick_count += 1
+
+        async def ghosts_return(ghosts: tuple[int]) -> None:
+            await self.send_all(lex['you_not_ghost'], lambda x: x in ghosts)
+
+            def set_lobby(ghost):
+                Bot_db.set_stage(ghost, Us.lobby.value)
+
+            map(set_lobby, ghosts)
+
+        ghosts = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby_ghost.value, self.players_id.keys()))
+        if len(ghosts) <= kick_count:
+            await ghosts_return(ghosts)
+            await self.preparedness()
+        else:
+            choosen_ghosts = ghosts[:kick_count]
+            await ghosts_return(choosen_ghosts)
+
+    async def preparedness(self, player_id: int = None, show_mes: bool = False):
         if self.is_full():
+            if player_id is not None:
+                await send_message(player_id, FuncEnum.keyboard, text=lex['you_ghost'], keyboard=keyboard_cancel())
             if self.is_ready():
                 await self.start_game()
             else:
@@ -499,11 +541,9 @@ class WaitingList:
                     await self.send_all('Ожидаем подтверждение от всех игроков.')
                     self.wait_for_confirm = True
                     await self.kick_unready()
-        else:
-            if self.manager == player_id:
-                await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=keyboard_manager())
-            else:
-                await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=keyboard_cancel())
+        elif player_id is not None:
+            k_board = keyboard_cancel() if player_id != self.manager else keyboard_manager()
+            await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=k_board)
 
     async def start_game(self):
         game = Game(self, private=self.private, manager=self.manager)
@@ -512,9 +552,10 @@ class WaitingList:
         await game.run()
 
     async def send_all(self, text: str, predicate=lambda x: True, keyboard=None):
-        for player in list(self.players_id.keys()):
-            if predicate(player):
-                await send_message(player, FuncEnum.keyboard, text=text, keyboard=keyboard)
+        async with asyncio.TaskGroup() as tg:
+            for player in list(self.players_id.keys()):
+                if predicate(player):
+                    tg.create_task(send_message(player, FuncEnum.keyboard, text=text, keyboard=keyboard))
 
     @staticmethod
     def get_roles(size: int) -> list[Role]:
@@ -539,32 +580,45 @@ class WaitingList:
         return roles
 
     @staticmethod
-    def serialize(obj, uid: int) -> None:
-        data: dict = WaitingList._load_file('edit_games.json')
+    def get_w_list(list_id: int, uid: int = None) -> Self | None:
+        """Возвращает лист по id, если указанный игрок - его менеджер"""
+        if list_id == -1:
+            return
+        for wlist in waiting_lists:
+            if wlist.id == list_id:
+                if uid is not None:
+                    if wlist.manager == uid:
+                        return wlist
+                else:
+                    return wlist
 
-        obj: WaitingList = copy.deepcopy(obj)
-        obj.__dict__['game_roles'] = list(map(lambda role: role.value, obj.__dict__['game_roles']))
-        data[str(uid)] = obj.__dict__
-
-        with open('edit_games.json', 'w') as file:
-            json.dump(data, file, indent=4)
-
-    @staticmethod
-    async def deserialize(uid: int):
-        data: dict = WaitingList._load_file('edit_games.json')
-        try:
-            data: dict = data[str(uid)]
-        except KeyError:
-            return WaitingList(6, uid)
-
-        data['game_roles'] = list(map(lambda idr: Role(idr), data['game_roles']))
-
-        w_list: WaitingList = WaitingList(data['size_game'], data['manager'], data['private'], data['game_roles'],
-                                          data['wait_for_confirm'], data['pause'])
-        w_list.players_id = {int(player): data['players_id'][player] for player in data['players_id']}
-        return w_list
-
-    @staticmethod
-    def _load_file(file_name: str) -> dict:
-        with open(file_name, 'r') as file:
-            return json.load(file)
+    # @staticmethod
+    # def serialize(obj, uid: int) -> None:
+    #     data: dict = WaitingList._load_file('edit_games.json')
+    #
+    #     obj: WaitingList = copy.deepcopy(obj)
+    #     obj.__dict__['game_roles'] = list(map(lambda role: role.value, obj.__dict__['game_roles']))
+    #     data[str(uid)] = obj.__dict__
+    #
+    #     with open('edit_games.json', 'w') as file:
+    #         json.dump(data, file, indent=4)
+    #
+    # @staticmethod
+    # async def deserialize(uid: int):
+    #     data: dict = WaitingList._load_file('edit_games.json')
+    #     try:
+    #         data: dict = data[str(uid)]
+    #     except KeyError:
+    #         return WaitingList(6, uid)
+    #
+    #     data['game_roles'] = list(map(lambda idr: Role(idr), data['game_roles']))
+    #
+    #     w_list: WaitingList = WaitingList(data['size_game'], data['manager'], data['private'], data['game_roles'],
+    #                                       data['wait_for_confirm'], data['pause'])
+    #     w_list.players_id = {int(player): data['players_id'][player] for player in data['players_id']}
+    #     return w_list
+    #
+    # @staticmethod
+    # def _load_file(file_name: str) -> dict:
+    #     with open(file_name, 'r') as file:
+    #         return json.load(file)
