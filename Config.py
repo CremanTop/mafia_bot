@@ -1,3 +1,4 @@
+import time
 from typing import Final, Self
 
 from aiogram import Bot, Dispatcher
@@ -29,3 +30,12 @@ class Config:
         if Config.__instance is None:
             Config.__instance = Config()
         return Config.__instance
+
+    @staticmethod
+    def get_time() -> str:
+        clock = time.localtime(time.time())
+        return f'{clock.tm_hour}:{clock.tm_min}:{clock.tm_sec}'
+
+    @staticmethod
+    def get_dated_message(message: str) -> str:
+        return f'[{Config.get_time()}] {message}'

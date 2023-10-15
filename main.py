@@ -145,8 +145,12 @@ async def text_message(message: Message):
         lex['button_rules_immortal'], lex['button_rules_medium'], lex['button_rules_barman'], lex['button_rules_don'],
         lex['button_rules_bodyguard'], lex['button_rules_snitch'])
 
-    if text == 'gamesp' and Bot_db.is_admin(uid):
-        print_games()
+    if Bot_db.is_admin(uid):
+        match text:
+            case 'gamesp':
+                print_games()
+            case 'addvgame':
+                await new_virtual_game(random.randint(3, 8), uid)
 
     if not Bot_db.user_exists(uid):
         Bot_db.add_user(uid)
@@ -191,40 +195,24 @@ async def text_message(message: Message):
                 waiting_lists.append(waiting_list)
                 await message.answer(m_game_setting(waiting_list), reply_markup=kb_game_setting(waiting_list))
 
-
-
             elif text == lex['button_game_start']:
-
-                if Bot_db.is_admin(uid) and config.TEST_MODE:
-                    # w_list = WaitingList(9, False)
-                    # waiting_lists.append(w_list)
-                    # #await w_list.add_player(uid)
-                    # for i in range(w_list.size_game - 2):
-                    #     await w_list.add_player(i)
-
-                    await new_virtual_game(random.randint(3, 8), uid)
-                    # await new_virtual_game(4)
-
-
-
-                else:
-                    min_slots = 100
-                    target_list = None
-                    for w_list in waiting_lists:
-                        if w_list.pause or w_list.private:
-                            continue
-                        slots = w_list.size_game - len(w_list.players_id)
-                        if slots == 1:
-                            await w_list.add_player(uid)
-                            return
-                        else:
-                            if slots < min_slots:
-                                min_slots = slots
-                                target_list = w_list
-                    if target_list is not None:
-                        await target_list.add_player(uid)
+                min_slots = 100
+                target_list = None
+                for w_list in waiting_lists:
+                    if w_list.pause or w_list.private:
+                        continue
+                    slots = w_list.size_game - len(w_list.players_id)
+                    if slots == 1:
+                        await w_list.add_player(uid)
+                        return
                     else:
-                        await message.answer(lex['no_games'])
+                        if slots < min_slots:
+                            min_slots = slots
+                            target_list = w_list
+                if target_list is not None:
+                    await target_list.add_player(uid)
+                else:
+                    await message.answer(lex['no_games'])
 
             elif text in buttons_rules_text:
                 mes = lex["general_rules"]
@@ -297,6 +285,7 @@ async def text_message(message: Message):
                 if w_list.id == game_id:
                     if text == lex['button_edit'] and w_list.manager == uid and not w_list.pause:
                         w_list.pause = True
+                        w_list.wait_for_confirm = False
                         await w_list.send_all(lex['start_editing'], lambda x: x != w_list.manager)
                         await message.answer(m_game_setting(w_list), reply_markup=kb_game_setting(w_list))
 
@@ -306,7 +295,8 @@ async def text_message(message: Message):
 
                     elif text == lex['button_ready']:
                         w_list.players_id[uid] = True
-                        await w_list.preparedness(uid)
+                        if not w_list.pause:
+                            await w_list.preparedness(uid)
                         await message.answer('Вы подтвердили своё участие', reply_markup=ReplyKeyboardRemove())
 
                     else:

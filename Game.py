@@ -1,7 +1,8 @@
 import asyncio
+from asyncio import Task
 from enum import Enum, auto
 from random import random
-from typing import Final, Self, Callable
+from typing import Final, Self, Callable, Optional
 
 from aiogram.types import ReplyKeyboardRemove, MediaGroup
 from aiogram.types.base import TelegramObject
@@ -445,17 +446,23 @@ class WaitingList:
         self.private: bool = private
         self.wait_for_confirm: bool = wait_for_confirm
         self.pause: bool = pause
+        self.__kick_task: Optional[Task] = None
         WaitingList.counter += 1
 
         asyncio.create_task(self.add_player(self.manager, True, False))
 
     def is_full(self) -> bool:  # хватает ли людей
-        return len(self.players_id) >= self.size_game
+        return len(self.get_not_ghosts()) >= self.size_game
 
     def is_ready(self) -> bool:  # все ли готовы
-        tuple_not_ghost = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id))
-        ready: list[bool] = [self.players_id[x] for x in tuple_not_ghost]
+        ready: list[bool] = [self.players_id[x] for x in self.get_not_ghosts()]
         return all(ready)
+
+    def get_ghosts(self) -> tuple[int]:
+        return tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby_ghost.value, self.players_id))
+
+    def get_not_ghosts(self) -> tuple[int]:
+        return tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id))
 
     async def add_player(self, player_id: int, confirm: bool = True, message: bool = True, redistribute_stages: bool = True):
         if redistribute_stages:
@@ -500,38 +507,40 @@ class WaitingList:
             self.wait_for_confirm = False
 
     async def kick_unready(self):
-        await asyncio.sleep(25)
-        if not self.wait_for_confirm:
-            return
 
-        kick_count: int = 0
-        players = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id.keys()))
-        for player in players:
-            if player in players:
-                if not self.players_id[player]:
-                    asyncio.create_task(self.remove_player(player))
-                    kick_count += 1
+        async def kick_task():
+            await asyncio.sleep(25)
 
-        async def ghosts_return(ghosts: tuple[int]) -> None:
-            await self.send_all(lex['you_not_ghost'], lambda x: x in ghosts)
+            if config.TEST_MODE:
+                print(config.get_dated_message('Таймер кика прошёл.'))
 
-            def set_lobby(ghost):
-                Bot_db.set_stage(ghost, Us.lobby.value)
+            if not self.wait_for_confirm:
+                return
 
-            map(set_lobby, ghosts)
+            players = self.get_not_ghosts()
+            for player in players:
+                if player in players:
+                    if not self.players_id[player]:
+                        asyncio.create_task(self.remove_player(player))
 
-        ghosts = tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby_ghost.value, self.players_id.keys()))
-        if len(ghosts) <= kick_count:
-            await ghosts_return(ghosts)
+            await self.bring_back_ghost()
             await self.preparedness()
-        else:
-            choosen_ghosts = ghosts[:kick_count]
-            await ghosts_return(choosen_ghosts)
+
+        if self.__kick_task is not None:
+            self.__kick_task.cancel()
+            if config.TEST_MODE:
+                print(config.get_dated_message('Кик отменён.'))
+        self.__kick_task = asyncio.create_task(kick_task())
 
     async def preparedness(self, player_id: int = None, show_mes: bool = False):
         if self.is_full():
-            if player_id is not None:
-                await send_message(player_id, FuncEnum.keyboard, text=lex['you_ghost'], keyboard=keyboard_cancel())
+            if len(self.get_not_ghosts()) > self.size_game:
+
+                for p_id in self.get_not_ghosts()[self.size_game:]:  # Лишние игроки становятся призраками
+                    await send_message(p_id, FuncEnum.keyboard, text=lex['you_ghost'], keyboard=keyboard_cancel())
+
+                if player_id is not None:
+                    await send_message(player_id, FuncEnum.keyboard, text=lex['you_ghost'], keyboard=keyboard_cancel())
             if self.is_ready():
                 await self.start_game()
             else:
@@ -541,9 +550,33 @@ class WaitingList:
                     await self.send_all('Ожидаем подтверждение от всех игроков.')
                     self.wait_for_confirm = True
                     await self.kick_unready()
-        elif player_id is not None:
-            k_board = keyboard_cancel() if player_id != self.manager else keyboard_manager()
-            await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=k_board)
+        else:
+            if player_id is not None:
+                k_board = keyboard_cancel() if player_id != self.manager else keyboard_manager()
+                await send_message(player_id, FuncEnum.keyboard, text=lex['waiting'], keyboard=k_board)
+
+            await self.bring_back_ghost()
+
+    async def bring_back_ghost(self) -> None:
+
+        async def ghosts_return(ghosts: tuple[int]) -> None:
+            await self.send_all(lex['you_not_ghost'], lambda x: x in ghosts)
+
+            def set_lobby(ghost):
+                Bot_db.set_stage(ghost, Us.lobby.value)
+
+            map(set_lobby, ghosts)
+
+        num: int = self.size_game - len(self.get_not_ghosts())
+        if num <= 0:
+            return
+
+        ghosts = self.get_ghosts()
+        if len(ghosts) <= num:
+            await ghosts_return(ghosts)
+        else:
+            choosen_ghosts = ghosts[:num]
+            await ghosts_return(choosen_ghosts)
 
     async def start_game(self):
         game = Game(self, private=self.private, manager=self.manager)
