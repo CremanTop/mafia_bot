@@ -309,8 +309,8 @@ async def text_message(message: Message):
 async def new_virtual_game(num: int, man: int):
     wait_list: WaitingList = WaitingList(num, man)
     waiting_lists.append(wait_list)
-    # for i in range(wait_list.size_game - 2):
-    #     await wait_list.add_player(i)
+    for i in range(wait_list.size_game - 1):
+        await wait_list.add_player(i)
     #wait_list.serialize(wait_list, man)
 
 
@@ -667,5 +667,8 @@ if __name__ == '__main__':
         Bot_db.set_stage(u_id, Us.default.value)
     #Bot_db.set_admin(2130716911)
     # Bot_db.set_wins(802878496, 12)
+    # names = ('Mr. Green💤', 'Лампочка💤', 'Товарищ💤', 'Доцент💤', 'Предатель💤', 'Аристократ💤', 'Тракторист💤', 'Кузьма💤', 'Биба💤', 'Боба💤', 'Фаренгейт💤', 'Тирекс💤', 'Убийца💤', 'Мирный💤', 'Прокурор💤')
+    # for i in range(15):
+    #     Bot_db.set_name(i, names[i])
     dp.middleware.setup(ThrottlingMiddleware(1))
     executor.start_polling(dp, skip_updates=False)

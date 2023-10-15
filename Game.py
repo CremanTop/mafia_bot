@@ -1,7 +1,7 @@
 import asyncio
+import random
 from asyncio import Task
 from enum import Enum, auto
-from random import random
 from typing import Final, Self, Callable, Optional
 
 from aiogram.types import ReplyKeyboardRemove, MediaGroup
@@ -34,11 +34,11 @@ class Game:
         self.phase: GamePhase = GamePhase.day_exclusion
         self.skip_count: int = 0
         self.voting_count: int = 0
-        self.time_evening: Final[int] = 20  # 20
-        self.time_night: Final[int] = 30  # 30
-        self.time_speak: Final[int] = 15  # 90
+        self.time_evening: Final[int] = 5  # 20
+        self.time_night: Final[int] = 5  # 30
+        self.time_speak: Final[int] = 5  # 90
         self.time_voting: Final[int] = 20  # 20
-        self.time_alert: Final[int] = 5  # 5 должно быть меньше всех остальных
+        self.time_alert: Final[int] = 2  # 5 должно быть меньше всех остальных
 
     def get_player(self, user_id: int) -> Player:
         for player in self.players:
@@ -259,7 +259,7 @@ class Game:
                 for player in self.players:
                     print(
                         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)',
-                        end='\n\n')
+                        end='\n')
 
             self.phase = GamePhase.day_discuss
             self.revaluation_night()
@@ -270,7 +270,7 @@ class Game:
                 for player in self.players:
                     print(
                         f'{Bot_db.get_username(player.id)} - {player.choosen_kill}(k), {player.choosen_beauty}(b), {player.choosen_doctor}(d), {player.choosen_godfather}(g), {player.choosen_barman}(bar), {player.choosen_bodyguard}(bg)',
-                        end='\n\n')
+                        end='\n')
 
             for player in self.players:
                 if player.choosen_kill > 0:
@@ -452,6 +452,7 @@ class WaitingList:
         asyncio.create_task(self.add_player(self.manager, True, False))
 
     def is_full(self) -> bool:  # хватает ли людей
+        print(len(self.get_not_ghosts()))
         return len(self.get_not_ghosts()) >= self.size_game
 
     def is_ready(self) -> bool:  # все ли готовы
@@ -518,25 +519,28 @@ class WaitingList:
                 return
 
             players = self.get_not_ghosts()
-            for player in players:
-                if player in players:
-                    if not self.players_id[player]:
-                        asyncio.create_task(self.remove_player(player))
+            async with asyncio.TaskGroup() as tg:
+                for player in players:
+                    if player in players:
+                        if not self.players_id[player]:
+                            tg.create_task(self.remove_player(player))
 
-            await self.bring_back_ghost()
-            await self.preparedness()
+            asyncio.create_task(self.preparedness())
 
         if self.__kick_task is not None:
             self.__kick_task.cancel()
             if config.TEST_MODE:
-                print(config.get_dated_message('Кик отменён.'))
+                print(config.get_dated_message('Прежний кик отменён.'))
         self.__kick_task = asyncio.create_task(kick_task())
 
     async def preparedness(self, player_id: int = None, show_mes: bool = False):
+        if config.TEST_MODE:
+            print('Подготовка в игре')
         if self.is_full():
             if len(self.get_not_ghosts()) > self.size_game:
 
                 for p_id in self.get_not_ghosts()[self.size_game:]:  # Лишние игроки становятся призраками
+                    Bot_db.set_stage(p_id, Us.lobby_ghost.value)
                     await send_message(p_id, FuncEnum.keyboard, text=lex['you_ghost'], keyboard=keyboard_cancel())
 
                 if player_id is not None:
@@ -548,8 +552,10 @@ class WaitingList:
                     await self.send_all('Подтвердите начало игры.',
                                         predicate=lambda player: not self.players_id[player], keyboard=keyboard_lobby())
                     await self.send_all('Ожидаем подтверждение от всех игроков.')
-                    self.wait_for_confirm = True
-                    await self.kick_unready()
+                self.wait_for_confirm = True
+                if config.TEST_MODE:
+                    print(config.get_dated_message('Таймер кика запущен.'))
+                await self.kick_unready()
         else:
             if player_id is not None:
                 k_board = keyboard_cancel() if player_id != self.manager else keyboard_manager()
@@ -558,15 +564,19 @@ class WaitingList:
             await self.bring_back_ghost()
 
     async def bring_back_ghost(self) -> None:
+        if config.TEST_MODE:
+            print('Вернём-ка призраков')
 
         async def ghosts_return(ghosts: tuple[int]) -> None:
+            if config.TEST_MODE:
+                print(f'Вот этих: {ghosts}')
             await self.send_all(lex['you_not_ghost'], lambda x: x in ghosts)
 
-            def set_lobby(ghost):
+            for ghost in ghosts:
                 Bot_db.set_stage(ghost, Us.lobby.value)
 
-            map(set_lobby, ghosts)
-
+        if len(self.get_ghosts()) <= 0:
+            return
         num: int = self.size_game - len(self.get_not_ghosts())
         if num <= 0:
             return
@@ -577,6 +587,7 @@ class WaitingList:
         else:
             choosen_ghosts = ghosts[:num]
             await ghosts_return(choosen_ghosts)
+        await self.preparedness()
 
     async def start_game(self):
         game = Game(self, private=self.private, manager=self.manager)

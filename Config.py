@@ -34,7 +34,7 @@ class Config:
     @staticmethod
     def get_time() -> str:
         clock = time.localtime(time.time())
-        return f'{clock.tm_hour}:{clock.tm_min}:{clock.tm_sec}'
+        return f'{clock.tm_hour}:{f"{clock.tm_min}".rjust(2, "0")}:{f"{clock.tm_sec}".rjust(2, "0")}'
 
     @staticmethod
     def get_dated_message(message: str) -> str:
