@@ -138,7 +138,7 @@ def __kb_games(games: list, index: int, data_game: str, data_index: str) -> Inli
     two_line: list[InlineKeyboardButton] = []
     i: int = 1
     for game in games:
-        if not game.private and not game.pause:
+        if not game.private:
             if index * size < i <= (index + 1) * size:
                 buttons.append(InlineKeyboardButton(text=str(i), callback_data=f'{data_game}{str(game.id)}'))
             i += 1

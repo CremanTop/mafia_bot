@@ -199,7 +199,7 @@ async def text_message(message: Message):
                 min_slots = 100
                 target_list = None
                 for w_list in waiting_lists:
-                    if w_list.pause or w_list.private:
+                    if w_list.private:
                         continue
                     slots = w_list.size_game - len(w_list.players_id)
                     if slots == 1:
@@ -299,6 +299,15 @@ async def text_message(message: Message):
                             await w_list.preparedness(uid)
                         await message.answer('Вы подтвердили своё участие', reply_markup=ReplyKeyboardRemove())
 
+                    elif text == 'pass':
+                        if w_list.manager and len(w_list.players_id) > 1:
+                            await w_list.assign_rights_moderator(list(w_list.players_id.keys())[0])
+
+                    elif 'pass' in text:
+                        if w_list.manager:
+                            mid = int(text[5:])
+                            await w_list.assign_rights_moderator(mid)
+
                     else:
                         await w_list.send_all(f'{Bot_db.get_username(uid)} говорит:\n{text.strip()}',
                                               predicate=lambda player: player != uid)
@@ -309,7 +318,7 @@ async def text_message(message: Message):
 async def new_virtual_game(num: int, man: int):
     wait_list: WaitingList = WaitingList(num, man)
     waiting_lists.append(wait_list)
-    for i in range(wait_list.size_game - 1):
+    for i in range(wait_list.size_game - 2):
         await wait_list.add_player(i)
     #wait_list.serialize(wait_list, man)
 
@@ -428,7 +437,7 @@ async def process_button_press(callback: CallbackQuery):
 
         await wait_list.send_all(lex['config_edit'] + m_game_setting(wait_list) + '\n\n' + m_players_in_lobby(wait_list),
                                  lambda x: x != wait_list.manager)
-        await wait_list.preparedness()
+        await wait_list.preparedness(None, True)
 
         # for i in range(game.size_game - 2):
         #     await game.add_player(i)
@@ -666,7 +675,8 @@ if __name__ == '__main__':
         Bot_db.set_game(u_id, -1)
         Bot_db.set_stage(u_id, Us.default.value)
     #Bot_db.set_admin(2130716911)
-    # Bot_db.set_wins(802878496, 12)
+    #Bot_db.set_wins(2130716911, 19)
+    #Bot_db.set_wins(1906460474, 4)
     # names = ('Mr. Green💤', 'Лампочка💤', 'Товарищ💤', 'Доцент💤', 'Предатель💤', 'Аристократ💤', 'Тракторист💤', 'Кузьма💤', 'Биба💤', 'Боба💤', 'Фаренгейт💤', 'Тирекс💤', 'Убийца💤', 'Мирный💤', 'Прокурор💤')
     # for i in range(15):
     #     Bot_db.set_name(i, names[i])

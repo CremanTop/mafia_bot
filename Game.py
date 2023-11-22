@@ -8,6 +8,7 @@ from aiogram.types import ReplyKeyboardRemove, MediaGroup
 from aiogram.types.base import TelegramObject
 
 from Client import UserStatus as Us
+from Config import Logger
 from modules_import import *
 from libs.api import FuncEnum, send_message
 from keyboard import kb_without_player, kb_role, kb_without_team, kb_all_players, keyboard_observer, keyboard_main, \
@@ -17,6 +18,7 @@ from lex import m_start_game, m_team_killers, m_player_role, lex, m_time_alert, 
 
 config: Final[Config] = Config.get()
 Bot_db = config.Bot_db
+global_logger = config.logger
 
 games: list = []
 waiting_lists: list = []
@@ -34,11 +36,11 @@ class Game:
         self.phase: GamePhase = GamePhase.day_exclusion
         self.skip_count: int = 0
         self.voting_count: int = 0
-        self.time_evening: Final[int] = 5  # 20
-        self.time_night: Final[int] = 5  # 30
-        self.time_speak: Final[int] = 5  # 90
-        self.time_voting: Final[int] = 20  # 20
-        self.time_alert: Final[int] = 2  # 5 должно быть меньше всех остальных
+        self.time_evening: Final[int] = 25  # 20
+        self.time_night: Final[int] = 30  # 30
+        self.time_speak: Final[int] = 90  # 90
+        self.time_voting: Final[int] = 25  # 20
+        self.time_alert: Final[int] = 5  # 5 должно быть меньше всех остальных
 
     def get_player(self, user_id: int) -> Player:
         for player in self.players:
@@ -54,7 +56,7 @@ class Game:
                 return game
 
     async def run(self) -> None:
-        self.assign_roles(self.players_id, self.roles.copy())
+        self.assign_roles()
         await self.send_to_all_players(FuncEnum.keyboard, text=m_start_game(self.players),
                                        keyboard=ReplyKeyboardRemove())
 
@@ -70,13 +72,16 @@ class Game:
         await asyncio.sleep(2)
         await self.evening()
 
-    def assign_roles(self, players: list[int], role_list: list[Role]):
+    def assign_roles(self):
         def assign(chat_id: int, role: Role):
             if 0 <= chat_id <= 100:
                 new_player = Player(chat_id, role, virtual=True)
             else:
                 new_player = Player(chat_id, role)
             self.players.append(new_player)
+
+        players: list[int] = self.players_id
+        role_list: list[Role] = self.roles.copy()
 
         active_players: list[int] = list(filter(lambda x: Bot_db.get_user_stage(x) != Us.lobby_ghost.value, players))
         ghosts: tuple[int] = tuple(filter(lambda x: Bot_db.get_user_stage(x) == Us.lobby_ghost.value, players))
@@ -91,6 +96,8 @@ class Game:
 
         for chat_id in ghosts:
             assign(chat_id, Role.observer)
+
+        random.shuffle(self.players)
 
     async def send_to_all_players(self,
                                   func,
@@ -420,9 +427,11 @@ class Game:
         w_list = WaitingList(self.size, self.manager, self.private, self.roles)
         waiting_lists.append(w_list)
         for player in self.players:
-            stage: int = Us.lobby.value if Bot_db.get_user_stage(player.id) == Us.ingame.value or player.id == self.manager else Us.lobby_ghost.value
+            if player.id == self.manager:
+                continue
+            stage: int = Us.lobby.value if Bot_db.get_user_stage(player.id) == Us.ingame.value else Us.lobby_ghost.value
             Bot_db.set_stage(player.id, stage)
-            await w_list.add_player(player.id, False, False, False)
+            await w_list.add_player(player.id, False, True, False)
 
 
 class GamePhase(Enum):
@@ -446,13 +455,15 @@ class WaitingList:
         self.private: bool = private
         self.wait_for_confirm: bool = wait_for_confirm
         self.pause: bool = pause
+        self.time_start: Final[int] = 10  # 10
         self.__kick_task: Optional[Task] = None
+        self.__start_task: Optional[Task] = None
+        self.logger: Logger = Logger(True, game=self.id)
         WaitingList.counter += 1
 
         asyncio.create_task(self.add_player(self.manager, True, False))
 
     def is_full(self) -> bool:  # хватает ли людей
-        print(len(self.get_not_ghosts()))
         return len(self.get_not_ghosts()) >= self.size_game
 
     def is_ready(self) -> bool:  # все ли готовы
@@ -466,6 +477,8 @@ class WaitingList:
         return tuple(filter(lambda p_id: Bot_db.get_user_stage(p_id) == Us.lobby.value, self.players_id))
 
     async def add_player(self, player_id: int, confirm: bool = True, message: bool = True, redistribute_stages: bool = True):
+        if config.TEST_MODE:
+            self.logger.info(f'Хотим добавить игрока {player_id}')
         if redistribute_stages:
             if not self.is_full():
                 Bot_db.set_stage(player_id, Us.lobby.value)
@@ -486,34 +499,42 @@ class WaitingList:
             if not self.pause:
                 await self.preparedness(player_id, True)
 
-    async def remove_player(self, player_id: int):
+    async def remove_player(self, player_id: int) -> None:
         Bot_db.set_stage(player_id, Us.default.value)
         Bot_db.set_game(player_id, -1)
         self.players_id.pop(player_id)
+        if config.TEST_MODE:
+            self.logger.info(f'Отключение игрока {player_id}')
         await send_message(player_id, FuncEnum.keyboard, text='Вы отключились от игры.', keyboard=keyboard_main())
 
-        if not config.TEST_MODE:
-            if len(tuple(filter(lambda id: id > 100, self.players_id))) == 0 and self in waiting_lists:
-                waiting_lists.remove(self)
-                return
+        if len(tuple(filter(lambda id: id > 100, self.players_id))) == 0 and self in waiting_lists:
+            waiting_lists.remove(self)
+            return
 
         await self.send_all(
             f'({len(self.players_id)}/{self.size_game}) Игрок {Bot_db.get_username(player_id)} отключился или был исключён.')
         if self.manager == player_id and len(self.players_id) > 0:
-            self.manager = list(self.players_id.keys())[0]
-            await send_message(self.manager, FuncEnum.keyboard,
-                               text='Теперь вы являетесь модератором этой игры и можете менять настройки.',
-                               keyboard=keyboard_manager())
+            await self.assign_rights_moderator(list(self.players_id.keys())[0], False)
         if self.wait_for_confirm and not self.is_full():
             self.wait_for_confirm = False
 
-    async def kick_unready(self):
+    async def assign_rights_moderator(self, to_id: int, inform: bool = True) -> None:
+        if inform:
+            await send_message(self.manager, FuncEnum.keyboard,
+                               text=f'Вы передали право модерации игроку {Bot_db.get_username(to_id)}.',
+                               keyboard=keyboard_cancel())
+        self.manager = to_id
+        await send_message(self.manager, FuncEnum.keyboard,
+                           text='Теперь вы являетесь модератором этой игры и можете менять настройки.',
+                           keyboard=keyboard_manager())
+
+    async def kick_unready(self) -> None:
 
         async def kick_task():
             await asyncio.sleep(25)
 
             if config.TEST_MODE:
-                print(config.get_dated_message('Таймер кика прошёл.'))
+                self.logger.info('Таймер кика прошёл.')
 
             if not self.wait_for_confirm:
                 return
@@ -530,12 +551,12 @@ class WaitingList:
         if self.__kick_task is not None:
             self.__kick_task.cancel()
             if config.TEST_MODE:
-                print(config.get_dated_message('Прежний кик отменён.'))
+                self.logger.info('Прежний кик отменён.')
         self.__kick_task = asyncio.create_task(kick_task())
 
-    async def preparedness(self, player_id: int = None, show_mes: bool = False):
+    async def preparedness(self, player_id: int = None, show_mes: bool = False) -> None:
         if config.TEST_MODE:
-            print('Подготовка в игре')
+            self.logger.info('Подготовка в игре')
         if self.is_full():
             if len(self.get_not_ghosts()) > self.size_game:
 
@@ -549,12 +570,15 @@ class WaitingList:
                 await self.start_game()
             else:
                 if show_mes:
+                    if config.TEST_MODE:
+                        self.logger.info('Просим подтверждения.')
                     await self.send_all('Подтвердите начало игры.',
                                         predicate=lambda player: not self.players_id[player], keyboard=keyboard_lobby())
-                    await self.send_all('Ожидаем подтверждение от всех игроков.')
+                    await self.send_all('Ожидаем подтверждение от всех игроков.',
+                                        predicate=lambda player: self.players_id[player])
                 self.wait_for_confirm = True
                 if config.TEST_MODE:
-                    print(config.get_dated_message('Таймер кика запущен.'))
+                    self.logger.info('Таймер кика запущен.')
                 await self.kick_unready()
         else:
             if player_id is not None:
@@ -564,12 +588,10 @@ class WaitingList:
             await self.bring_back_ghost()
 
     async def bring_back_ghost(self) -> None:
-        if config.TEST_MODE:
-            print('Вернём-ка призраков')
 
         async def ghosts_return(ghosts: tuple[int]) -> None:
             if config.TEST_MODE:
-                print(f'Вот этих: {ghosts}')
+                self.logger.info(f'Вернули призраков: {ghosts}')
             await self.send_all(lex['you_not_ghost'], lambda x: x in ghosts)
 
             for ghost in ghosts:
@@ -587,13 +609,30 @@ class WaitingList:
         else:
             choosen_ghosts = ghosts[:num]
             await ghosts_return(choosen_ghosts)
-        await self.preparedness()
+        await self.preparedness(None, True)
 
-    async def start_game(self):
-        game = Game(self, private=self.private, manager=self.manager)
-        games.append(game)
-        waiting_lists.remove(self)
-        await game.run()
+    async def start_game(self) -> None:
+
+        async def start_task() -> None:
+            await asyncio.sleep(self.time_start)
+            if not self.is_full() or not self.is_ready():
+                await self.send_all(f'Старт игры отменён')
+                if config.TEST_MODE:
+                    self.logger.error('Игра не может начаться.')
+                return
+            game = Game(self, private=self.private, manager=self.manager)
+            games.append(game)
+            waiting_lists.remove(self)
+            await game.run()
+
+        if self.__start_task is not None:
+            self.__start_task.cancel()
+            if config.TEST_MODE:
+                self.logger.info('Прежний старт отменён.')
+        if config.TEST_MODE:
+            self.logger.info('Игра начинается.')
+        await self.send_all(f'Игра начнётся через {self.time_start} секунд!')
+        self.__start_task = asyncio.create_task(start_task())
 
     async def send_all(self, text: str, predicate=lambda x: True, keyboard=None):
         async with asyncio.TaskGroup() as tg:
